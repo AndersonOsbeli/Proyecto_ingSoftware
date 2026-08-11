@@ -1,0 +1,192 @@
+import { createStore, genId, today } from '../../lib/store';
+import {
+  IngresoEquipo, Inspeccion, ModeloSpecs, MODELOS_CATALOGO,
+  DocumentacionValidacion, InspeccionFisica, Hallazgo, Evidencia
+} from './types';
+import { registrar as registrarAuditoria } from '../empleados/service-auditoria';
+import { TipoAccionAuditoria } from '../empleados/types';
+
+const KEY_INGRESOS = 'sg_inventario';
+const KEY_INSPECCIONES = 'sg_inspecciones';
+
+export const ingresosStore = createStore<IngresoEquipo[]>(KEY_INGRESOS, () => []);
+export const inspeccionesStore = createStore<Inspeccion[]>(KEY_INSPECCIONES, () => []);
+
+function usuarioActual(): string {
+  try {
+    const raw = localStorage.getItem('sg_auth');
+    if (raw) {
+      const parsed = JSON.parse(raw) as { user?: { name?: string } | null };
+      if (parsed?.user?.name) return parsed.user.name;
+    }
+  } catch {
+    /* ignore */
+  }
+  return 'Sistema';
+}
+
+function auditar(accion: TipoAccionAuditoria, registroAfectado: string, descripcion: string, datosAnteriores?: unknown, datosNuevos?: unknown): void {
+  registrarAuditoria({
+    usuario: usuarioActual(),
+    accion,
+    modulo: 'inventario',
+    registroAfectado,
+    descripcion,
+    datosAnteriores: datosAnteriores === undefined ? null : JSON.stringify(datosAnteriores),
+    datosNuevos: datosNuevos === undefined ? null : JSON.stringify(datosNuevos)
+  });
+}
+
+function genFolio(): string {
+  return `ING-${Date.now().toString(36).toUpperCase()}`;
+}
+
+export function getModelos(): ModeloSpecs[] {
+  return MODELOS_CATALOGO;
+}
+
+export function getModeloPorId(id: string): ModeloSpecs | undefined {
+  return MODELOS_CATALOGO.find((m) => m.modeloId === id);
+}
+
+export function getIngresos(): IngresoEquipo[] {
+  return ingresosStore.get();
+}
+
+export function getIngresoPorId(id: string): IngresoEquipo | undefined {
+  return ingresosStore.get().find((i) => i.id === id);
+}
+
+export function registrarIngreso(data: Omit<IngresoEquipo, 'id' | 'folio'>): IngresoEquipo {
+  const nuevo: IngresoEquipo = { ...data, id: genId(), folio: genFolio() };
+  ingresosStore.set([nuevo, ...getIngresos()]);
+  auditar('crear', nuevo.folio, `Ingreso de equipo registrado (${nuevo.modelo}, serial ${nuevo.numeroSerie})`, null, nuevo);
+  return nuevo;
+}
+
+export function eliminarIngreso(id: string): void {
+  const prev = getIngresoPorId(id);
+  ingresosStore.set(getIngresos().filter((i) => i.id !== id));
+  inspeccionesStore.set(getInspecciones().filter((i) => i.ingresoId !== id));
+  auditar('eliminar', prev?.folio || id, `Ingreso eliminado con su expediente`, prev ?? null, null);
+}
+
+export function getInspecciones(): Inspeccion[] {
+  return inspeccionesStore.get();
+}
+
+export function getInspeccionPorId(id: string): Inspeccion | undefined {
+  return inspeccionesStore.get().find((i) => i.id === id);
+}
+
+export function getInspeccionPorIngreso(ingresoId: string): Inspeccion | undefined {
+  return inspeccionesStore.get().find((i) => i.ingresoId === ingresoId);
+}
+
+function nuevaInspeccionVacia(ingresoId: string, usuario: string): Inspeccion {
+  return {
+    id: genId(),
+    ingresoId,
+    folio: `INSP-${Date.now().toString(36).toUpperCase()}`,
+    estado: 'pendiente_revision',
+    documentacion: {
+      fichaTecnica: false, manuales: false, certificados: false,
+      etiquetas: false, documentoReferencia: false,
+      resultado: '', observaciones: ''
+    },
+    inspeccionFisica: { condicionGeneral: '', serialesVisibles: '', observaciones: '' },
+    verificacionTecnica: {},
+    checklistFisico: [],
+    hallazgos: [],
+    evidencias: [],
+    resultado: '',
+    comentarioFinal: '',
+    disposicion: '',
+    justificacionDisposicion: '',
+    fechaCierre: null,
+    creadoPor: usuario,
+    fechaCreacion: new Date().toISOString()
+  };
+}
+
+export function crearInspeccion(ingresoId: string, usuario: string): Inspeccion {
+  const nueva = nuevaInspeccionVacia(ingresoId, usuario);
+  inspeccionesStore.set([...getInspecciones(), nueva]);
+  auditar('crear', nueva.folio, `Expediente de inspeccion creado (ingreso ${ingresoId})`, null, nueva);
+  return nueva;
+}
+
+function guardarInspeccion(id: string, updater: (ins: Inspeccion) => Inspeccion): void {
+  inspeccionesStore.set(getInspecciones().map((i) => (i.id === id ? updater(i) : i)));
+}
+
+export function updateDocumentacion(id: string, doc: DocumentacionValidacion): void {
+  const prev = getInspeccionPorId(id);
+  guardarInspeccion(id, (i) => ({ ...i, documentacion: doc }));
+  auditar('editar', prev?.folio || id, 'Validacion documental actualizada', prev?.documentacion ?? null, doc);
+}
+
+export function updateInspeccionFisica(id: string, fisica: InspeccionFisica, checklist?: boolean[]): void {
+  const prev = getInspeccionPorId(id);
+  guardarInspeccion(id, (i) => ({ ...i, inspeccionFisica: fisica, ...(checklist ? { checklistFisico: checklist } : {}) }));
+  auditar('editar', prev?.folio || id, 'Inspeccion fisica actualizada', prev?.inspeccionFisica ?? null, fisica);
+}
+
+export function updateVerificacionTecnica(id: string, tecnica: Record<string, { valor: string; estado: 'verificado' | 'pendiente' | 'no_aplica' }>): void {
+  const prev = getInspeccionPorId(id);
+  guardarInspeccion(id, (i) => ({ ...i, verificacionTecnica: tecnica }));
+  auditar('editar', prev?.folio || id, 'Verificacion tecnica actualizada');
+}
+
+export function agregarHallazgo(id: string, hallazgo: Omit<Hallazgo, 'id'>): void {
+  const ins = getInspeccionPorId(id);
+  guardarInspeccion(id, (i) => ({ ...i, hallazgos: [...i.hallazgos, { ...hallazgo, id: genId() }] }));
+  auditar('crear', ins?.folio || id, `Hallazgo registrado (${hallazgo.tipo}, severidad ${hallazgo.severidad})`, null, hallazgo);
+}
+
+export function eliminarHallazgo(inspeccionId: string, hallazgoId: string): void {
+  const ins = getInspeccionPorId(inspeccionId);
+  const prev = ins?.hallazgos.find((h) => h.id === hallazgoId);
+  guardarInspeccion(inspeccionId, (i) => ({ ...i, hallazgos: i.hallazgos.filter((h) => h.id !== hallazgoId) }));
+  auditar('eliminar', ins?.folio || inspeccionId, `Hallazgo eliminado`, prev ?? null, null);
+}
+
+export function agregarEvidencia(id: string, evidencia: Omit<Evidencia, 'id'>): void {
+  const ins = getInspeccionPorId(id);
+  guardarInspeccion(id, (i) => ({ ...i, evidencias: [...i.evidencias, { ...evidencia, id: genId() }] }));
+  auditar('crear', ins?.folio || id, `Evidencia adjuntada: ${evidencia.nombre}`, null, evidencia);
+}
+
+export function eliminarEvidencia(inspeccionId: string, evidenciaId: string): void {
+  const ins = getInspeccionPorId(inspeccionId);
+  const prev = ins?.evidencias.find((e) => e.id === evidenciaId);
+  guardarInspeccion(inspeccionId, (i) => ({ ...i, evidencias: i.evidencias.filter((e) => e.id !== evidenciaId) }));
+  auditar('eliminar', ins?.folio || inspeccionId, `Evidencia eliminada: ${prev?.nombre ?? evidenciaId}`, prev ?? null, null);
+}
+
+export function emitirResultado(id: string, resultado: Inspeccion['resultado'], comentarioFinal: string): void {
+  const prev = getInspeccionPorId(id);
+  guardarInspeccion(id, (i) => ({
+    ...i,
+    resultado,
+    comentarioFinal,
+    estado: i.estado === 'pendiente_revision' ? 'en_proceso' : i.estado
+  }));
+  auditar('aprobar', prev?.folio || id, `Resultado de inspeccion emitido: ${resultado}`, prev ? { resultado: prev.resultado, comentarioFinal: prev.comentarioFinal } : null, { resultado, comentarioFinal });
+}
+
+export function gestionarDisposicion(id: string, disposicion: Inspeccion['disposicion'], justificacion: string): void {
+  const prev = getInspeccionPorId(id);
+  guardarInspeccion(id, (i) => ({
+    ...i,
+    disposicion,
+    justificacionDisposicion: justificacion,
+    estado: 'completada',
+    fechaCierre: new Date().toISOString()
+  }));
+  auditar('aprobar', prev?.folio || id, `Expediente cerrado con disposicion: ${disposicion}`, null, { disposicion, justificacion });
+}
+
+export function getFechaHoy(): string {
+  return today();
+}
