@@ -58,9 +58,18 @@ export function getIngresoPorId(id: string): IngresoEquipo | undefined {
 }
 
 export function registrarIngreso(data: Omit<IngresoEquipo, 'id' | 'folio'>): IngresoEquipo {
-  const nuevo: IngresoEquipo = { ...data, id: genId(), folio: genFolio() };
+  const tieneDoc = Boolean(data.documentoReferencia && data.documentoReferencia.trim().length > 0);
+  const estadoDoc = data.estadoDocumental || (tieneDoc ? 'con_documento' : 'pendiente_validacion');
+  
+  const nuevo: IngresoEquipo = {
+    ...data,
+    id: genId(),
+    folio: genFolio(),
+    estadoDocumental: estadoDoc,
+    fechaRegistro: new Date().toISOString()
+  };
   ingresosStore.set([nuevo, ...getIngresos()]);
-  auditar('crear', nuevo.folio, `Ingreso de equipo registrado (${nuevo.modelo}, serial ${nuevo.numeroSerie})`, null, nuevo);
+  auditar('crear', nuevo.folio, `Ingreso de equipo registrado (${nuevo.modelo}, serial ${nuevo.numeroSerie || 'S/N'}). Estado documental: ${estadoDoc}`, null, nuevo);
   return nuevo;
 }
 
@@ -109,11 +118,22 @@ function nuevaInspeccionVacia(ingresoId: string, usuario: string): Inspeccion {
   };
 }
 
-export function crearInspeccion(ingresoId: string, usuario: string): Inspeccion {
+export function crearInspeccion(
+  ingresoId: string,
+  usuario: string,
+  estadoInicial: 'pendiente_revision' | 'cuarentena_tecnica' = 'pendiente_revision'
+): { inspeccion: Inspeccion; esNuevo: boolean } {
+  // Flujo alterno: Si ya existe una inspección activa para ese ingreso, impedir duplicarla
+  const existente = getInspeccionPorIngreso(ingresoId);
+  if (existente) {
+    return { inspeccion: existente, esNuevo: false };
+  }
+
   const nueva = nuevaInspeccionVacia(ingresoId, usuario);
+  nueva.estado = estadoInicial;
   inspeccionesStore.set([...getInspecciones(), nueva]);
-  auditar('crear', nueva.folio, `Expediente de inspeccion creado (ingreso ${ingresoId})`, null, nueva);
-  return nueva;
+  auditar('crear', nueva.folio, `Expediente de inspección creado (${nueva.folio}) asociado a ingreso ${ingresoId} en estado ${estadoInicial}`, null, nueva);
+  return { inspeccion: nueva, esNuevo: true };
 }
 
 function guardarInspeccion(id: string, updater: (ins: Inspeccion) => Inspeccion): void {
@@ -132,16 +152,29 @@ export function updateInspeccionFisica(id: string, fisica: InspeccionFisica, che
   auditar('editar', prev?.folio || id, 'Inspeccion fisica actualizada', prev?.inspeccionFisica ?? null, fisica);
 }
 
-export function updateVerificacionTecnica(id: string, tecnica: Record<string, { valor: string; estado: 'verificado' | 'pendiente' | 'no_aplica' }>): void {
+export function updateVerificacionTecnica(
+  id: string,
+  tecnica: Record<string, { valor: string; estado: 'verificado' | 'pendiente' | 'no_aplica' }>,
+  confirmada?: boolean
+): void {
   const prev = getInspeccionPorId(id);
-  guardarInspeccion(id, (i) => ({ ...i, verificacionTecnica: tecnica }));
-  auditar('editar', prev?.folio || id, 'Verificacion tecnica actualizada');
+  guardarInspeccion(id, (i) => ({
+    ...i,
+    verificacionTecnica: tecnica,
+    ...(confirmada !== undefined ? { verificacionTecnicaConfirmada: confirmada } : {})
+  }));
+  auditar('editar', prev?.folio || id, 'Verificación técnica actualizada');
 }
 
-export function agregarHallazgo(id: string, hallazgo: Omit<Hallazgo, 'id'>): void {
+export function agregarHallazgo(id: string, hallazgo: Omit<Hallazgo, 'id' | 'fechaRegistro'>): void {
   const ins = getInspeccionPorId(id);
-  guardarInspeccion(id, (i) => ({ ...i, hallazgos: [...i.hallazgos, { ...hallazgo, id: genId() }] }));
-  auditar('crear', ins?.folio || id, `Hallazgo registrado (${hallazgo.tipo}, severidad ${hallazgo.severidad})`, null, hallazgo);
+  const nuevo: Hallazgo = {
+    ...hallazgo,
+    id: genId(),
+    fechaRegistro: new Date().toISOString()
+  };
+  guardarInspeccion(id, (i) => ({ ...i, hallazgos: [...i.hallazgos, nuevo] }));
+  auditar('crear', ins?.folio || id, `Hallazgo registrado (${nuevo.tipo}, severidad ${nuevo.severidad})`, null, nuevo);
 }
 
 export function eliminarHallazgo(inspeccionId: string, hallazgoId: string): void {
@@ -151,10 +184,15 @@ export function eliminarHallazgo(inspeccionId: string, hallazgoId: string): void
   auditar('eliminar', ins?.folio || inspeccionId, `Hallazgo eliminado`, prev ?? null, null);
 }
 
-export function agregarEvidencia(id: string, evidencia: Omit<Evidencia, 'id'>): void {
+export function agregarEvidencia(id: string, evidencia: Omit<Evidencia, 'id' | 'fechaRegistro'>): void {
   const ins = getInspeccionPorId(id);
-  guardarInspeccion(id, (i) => ({ ...i, evidencias: [...i.evidencias, { ...evidencia, id: genId() }] }));
-  auditar('crear', ins?.folio || id, `Evidencia adjuntada: ${evidencia.nombre}`, null, evidencia);
+  const nueva: Evidencia = {
+    ...evidencia,
+    id: genId(),
+    fechaRegistro: new Date().toISOString()
+  };
+  guardarInspeccion(id, (i) => ({ ...i, evidencias: [...i.evidencias, nueva] }));
+  auditar('crear', ins?.folio || id, `Evidencia adjuntada: ${nueva.nombre}`, null, nueva);
 }
 
 export function eliminarEvidencia(inspeccionId: string, evidenciaId: string): void {
@@ -172,7 +210,7 @@ export function emitirResultado(id: string, resultado: Inspeccion['resultado'], 
     comentarioFinal,
     estado: i.estado === 'pendiente_revision' ? 'en_proceso' : i.estado
   }));
-  auditar('aprobar', prev?.folio || id, `Resultado de inspeccion emitido: ${resultado}`, prev ? { resultado: prev.resultado, comentarioFinal: prev.comentarioFinal } : null, { resultado, comentarioFinal });
+  auditar('aprobar', prev?.folio || id, `Resultado de inspección emitido: ${resultado}`, prev ? { resultado: prev.resultado, comentarioFinal: prev.comentarioFinal } : null, { resultado, comentarioFinal });
 }
 
 export function gestionarDisposicion(id: string, disposicion: Inspeccion['disposicion'], justificacion: string): void {
@@ -184,7 +222,24 @@ export function gestionarDisposicion(id: string, disposicion: Inspeccion['dispos
     estado: 'completada',
     fechaCierre: new Date().toISOString()
   }));
-  auditar('aprobar', prev?.folio || id, `Expediente cerrado con disposicion: ${disposicion}`, null, { disposicion, justificacion });
+  auditar('aprobar', prev?.folio || id, `Expediente cerrado con disposición: ${disposicion}`, null, { disposicion, justificacion });
+}
+
+export function devolverAInspeccion(id: string, motivo: string, usuario: string): void {
+  const prev = getInspeccionPorId(id);
+  const devolucion = {
+    fecha: new Date().toISOString(),
+    usuario,
+    motivo
+  };
+  guardarInspeccion(id, (i) => ({
+    ...i,
+    estado: 'en_proceso',
+    disposicion: '',
+    resultado: i.resultado, // Conserva dictamen pero requiere re-evaluación
+    historialDevoluciones: [...(i.historialDevoluciones || []), devolucion]
+  }));
+  auditar('editar', prev?.folio || id, `Expediente devuelto a inspección por supervisor: ${motivo}`, null, devolucion);
 }
 
 export function getFechaHoy(): string {

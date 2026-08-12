@@ -12,14 +12,17 @@ export type DisposicionFinal = 'liberacion' | 'retencion' | 'rechazo';
 export type TipoHallazgo = 'documental' | 'fisico' | 'tecnico' | 'accesorio_faltante';
 export type SeveridadHallazgo = 'baja' | 'media' | 'alta' | 'critica';
 
+export type EstadoDocumentalIngreso = 'con_documento' | 'pendiente_validacion';
+
 export interface IngresoEquipo {
   id: string;
   folio: string;
   fecha: string;
-  origen: 'proveedor' | 'interno' | 'donacion' | 'otro';
+  origen: 'proveedor' | 'interno' | 'donacion' | 'cliente' | 'otro';
   proveedor: string;
   cantidad: number;
   documentoReferencia: string;
+  estadoDocumental: EstadoDocumentalIngreso;
   tipoEquipo: string;
   modelo: string;
   numeroParte: string;
@@ -27,6 +30,7 @@ export interface IngresoEquipo {
   estadoFisico: 'Nuevo' | 'Usado - Bueno' | 'Usado - Danado';
   observaciones: string;
   registradoPor: string;
+  fechaRegistro?: string;
 }
 
 export interface DocumentacionValidacion {
@@ -35,12 +39,21 @@ export interface DocumentacionValidacion {
   certificados: boolean;
   etiquetas: boolean;
   documentoReferencia: boolean;
+  coincidenciaDatosClave?: {
+    marca: boolean;
+    modelo: boolean;
+    numeroParte: boolean;
+    numeroSerie: boolean;
+  };
   resultado: 'completa' | 'incompleta' | 'con_discrepancias' | 'no_proporcionada' | '';
   observaciones: string;
 }
 
 export interface InspeccionFisica {
   condicionGeneral: 'sin_dano' | 'con_observaciones' | 'con_dano' | '';
+  empaqueEstado?: string;
+  placaIdentificacion?: boolean;
+  accesoriosFaltantes?: string;
   serialesVisibles: string;
   observaciones: string;
 }
@@ -53,6 +66,7 @@ export interface Hallazgo {
   descripcion: string;
   origen: string;
   registradoPor: string;
+  fechaRegistro?: string;
 }
 
 export interface Evidencia {
@@ -64,6 +78,13 @@ export interface Evidencia {
   hallazgoId?: string;
   etapa: string;
   registradoPor: string;
+  fechaRegistro?: string;
+}
+
+export interface DevolucionHistorial {
+  fecha: string;
+  usuario: string;
+  motivo: string;
 }
 
 export interface Inspeccion {
@@ -74,6 +95,7 @@ export interface Inspeccion {
   documentacion: DocumentacionValidacion;
   inspeccionFisica: InspeccionFisica;
   verificacionTecnica: Record<string, { valor: string; estado: 'verificado' | 'pendiente' | 'no_aplica' }>;
+  verificacionTecnicaConfirmada?: boolean;
   checklistFisico: boolean[];
   hallazgos: Hallazgo[];
   evidencias: Evidencia[];
@@ -81,6 +103,7 @@ export interface Inspeccion {
   comentarioFinal: string;
   disposicion: DisposicionFinal | '';
   justificacionDisposicion: string;
+  historialDevoluciones?: DevolucionHistorial[];
   fechaCierre: string | null;
   creadoPor: string;
   fechaCreacion: string;
@@ -202,4 +225,42 @@ export const RESULTADO_LABELS: Record<string, string> = {
   conforme: 'Conforme',
   conforme_observaciones: 'Conforme (obs.)',
   no_conforme: 'No conforme'
+};
+
+export const PLANTILLA_GENERICA_SPECS: Record<string, Record<string, string>> = {
+  laptop: {
+    procesador: 'CPU Estándar',
+    ram: 'Memoria RAM',
+    almacenamiento: 'Disco / SSD',
+    pantalla: 'Pantalla Integrada',
+    puertos: 'Puertos de E/S',
+    conectividad: 'Wi-Fi / Ethernet'
+  },
+  desktop: {
+    procesador: 'CPU Estándar',
+    ram: 'Memoria RAM',
+    almacenamiento: 'Disco / SSD',
+    graficos: 'Tarjeta de Video',
+    puertos: 'Puertos de E/S',
+    fuentePoder: 'Fuente de Poder'
+  },
+  monitor: {
+    pantalla: 'Tamaño y Panel',
+    resolucion: 'Resolución de Video',
+    puertos: 'Puertos HDMI/DP/VGA',
+    alimentacion: 'Fuente / Adaptador'
+  },
+  impresora: {
+    tecnologia: 'Laser / Inyección',
+    conectividad: 'USB / Red',
+    consumible: 'Tóner / Cartucho',
+    bandeja: 'Capacidad Bandeja'
+  },
+  generica: {
+    procesador: 'Procesador / Chipset',
+    ram: 'Memoria RAM / Capacidad',
+    almacenamiento: 'Unidad Almacenamiento',
+    interfaces: 'Puertos / Interfaz',
+    alimentacion: 'Tensión / Adaptador'
+  }
 };
