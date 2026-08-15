@@ -15,14 +15,16 @@ import DescriptionIcon from '@mui/icons-material/Description';
 import InventoryIcon from '@mui/icons-material/Inventory';
 import { useAuth } from '../../lib/auth';
 import { today } from '../../lib/store';
-import { getModelos, registrarIngreso } from './service';
+import { getModelos, registrarIngresoAPI } from './service';
 import { IngresoEquipo, EstadoDocumentalIngreso } from './types';
 
 interface FormErrors {
   fecha?: string;
   proveedor?: string;
   tipoEquipo?: string;
+  marca?: string;
   modelo?: string;
+  numeroParte?: string;
   cantidad?: string;
 }
 
@@ -34,7 +36,7 @@ export default function Ingreso() {
     message: '',
     severity: 'success'
   });
-  
+
   const modelos = getModelos();
 
   const [form, setForm] = useState({
@@ -44,6 +46,7 @@ export default function Ingreso() {
     tipoEquipo: 'laptop',
     cantidad: 1,
     documentoReferencia: '',
+    marca: '',
     modelo: '',
     numeroParte: '',
     numeroSerie: '',
@@ -68,14 +71,16 @@ export default function Ingreso() {
     if (!form.fecha) errs.fecha = 'La fecha de ingreso es obligatoria';
     if (!form.proveedor || form.proveedor.trim() === '') errs.proveedor = 'El proveedor o remitente es obligatorio';
     if (!form.tipoEquipo) errs.tipoEquipo = 'El tipo de equipo es obligatorio';
-    if (!form.modelo) errs.modelo = 'Seleccione o ingrese un modelo de equipo';
+    if (!form.marca) errs.marca = 'La marca del equipo es obligatoria';
+    if (!form.modelo) errs.modelo = 'El modelo del equipo es obligatorio';
+    if (!form.numeroParte || form.numeroParte.trim() === '') errs.numeroParte = 'El número de parte es obligatorio para generar el folio';
     if (!form.cantidad || Number(form.cantidad) <= 0) errs.cantidad = 'La cantidad debe ser mayor a 0';
 
     setErrors(errs);
     return Object.keys(errs).length === 0;
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
     // Flujo alterno: Validar campos obligatorios
@@ -99,10 +104,18 @@ export default function Ingreso() {
       registradoPor: currentUser?.name ? `${currentUser.name} (Recepcion)` : 'Recepcionista'
     };
 
-    // Crear registro y asignar identificador único (folio)
-    const nuevoRegistro = registrarIngreso(data);
-    setIngresoCreado(nuevoRegistro);
-    setOpenModalExito(true);
+    try {
+      // Registrar equipo vía API (guarda en SQL Server)
+      const nuevoRegistro = await registrarIngresoAPI(data);
+      setIngresoCreado(nuevoRegistro);
+      setOpenModalExito(true);
+    } catch (err) {
+      setSnack({
+        open: true,
+        message: 'Error al conectar con la API. Verifica que el servidor esté corriendo.',
+        severity: 'error'
+      });
+    }
   };
 
   const sinDocumento = form.documentoReferencia.trim().length === 0;
@@ -219,18 +232,48 @@ export default function Ingreso() {
               </Grid>
 
               <Grid item xs={12} md={8}>
-                <TextField
-                  label="Documento de Referencia (Opcional)"
-                  placeholder="Folio de orden de compra, factura, guía de remisión o contrato"
-                  fullWidth
-                  value={form.documentoReferencia}
-                  onChange={(e) => set('documentoReferencia', e.target.value)}
-                  helperText={
-                    sinDocumento
-                      ? 'Si no se proporciona un documento, el equipo quedará en estado "Pendiente de validación documental"'
-                      : 'Documento registrado para respaldo documental'
-                  }
-                />
+                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5, mt: 1 }}>
+                  <Typography variant="body2" color="text.secondary" fontWeight={500}>
+                    Documento de Referencia (Ficha Técnica / Manual)
+                  </Typography>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                    <Button
+                      component="label"
+                      variant="outlined"
+                      startIcon={<DescriptionIcon />}
+                      sx={{ px: 3, py: 1, borderRadius: 2 }}
+                    >
+                      Seleccionar Archivo
+                      <input
+                        type="file"
+                        hidden
+                        accept=".pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          set('documentoReferencia', file ? file.name : '');
+                        }}
+                      />
+                    </Button>
+                    {form.documentoReferencia ? (
+                      <Chip
+                        icon={<CheckCircleOutlineIcon />}
+                        label={form.documentoReferencia}
+                        color="success"
+                        variant="outlined"
+                        onDelete={() => set('documentoReferencia', '')}
+                      />
+                    ) : (
+                      <Typography variant="body2" color="text.secondary" fontStyle="italic">
+                        Ningún archivo seleccionado
+                      </Typography>
+                    )}
+                  </Box>
+                  <Typography variant="caption" color={sinDocumento ? 'warning.main' : 'success.main'}>
+                    {sinDocumento
+                      ? ''
+                      : 'Documento registrado para respaldo documental'}
+                  </Typography>
+                </Box>
               </Grid>
 
               <Grid item xs={12} md={4} sx={{ display: 'flex', alignItems: 'center' }}>
@@ -258,7 +301,7 @@ export default function Ingreso() {
             <Divider sx={{ mb: 2.5 }} />
 
             <Grid container spacing={2.5}>
-              <Grid item xs={12} sm={6} md={4}>
+              <Grid item xs={12} sm={6} md={3}>
                 <FormControl fullWidth error={Boolean(errors.tipoEquipo)}>
                   <InputLabel id="tipo-label">Tipo de Equipo *</InputLabel>
                   <Select
@@ -279,26 +322,31 @@ export default function Ingreso() {
                 </FormControl>
               </Grid>
 
-              <Grid item xs={12} sm={6} md={4}>
-                <FormControl fullWidth error={Boolean(errors.modelo)}>
-                  <InputLabel id="modelo-label">Modelo del Equipo *</InputLabel>
-                  <Select
-                    labelId="modelo-label"
-                    label="Modelo del Equipo *"
-                    value={form.modelo}
-                    onChange={(e) => set('modelo', e.target.value)}
-                  >
-                    {modelos.map((m) => (
-                      <MenuItem key={m.modeloId} value={m.modeloId}>
-                        {m.marca} - {m.nombre} ({m.tipo})
-                      </MenuItem>
-                    ))}
-                  </Select>
-                  {errors.modelo && <FormHelperText>{errors.modelo}</FormHelperText>}
-                </FormControl>
+              <Grid item xs={12} sm={6} md={3}>
+                <TextField
+                  label="Marca del Equipo *"
+                  placeholder="Ej. Dell, HP, Apple"
+                  fullWidth
+                  value={form.marca}
+                  onChange={(e) => set('marca', e.target.value)}
+                  error={Boolean(errors.marca)}
+                  helperText={errors.marca || 'Fabricante del equipo'}
+                />
               </Grid>
 
-              <Grid item xs={12} sm={6} md={4}>
+              <Grid item xs={12} sm={6} md={3}>
+                <TextField
+                  label="Modelo del Equipo *"
+                  placeholder="Ej. Latitude 5420"
+                  fullWidth
+                  value={form.modelo}
+                  onChange={(e) => set('modelo', e.target.value)}
+                  error={Boolean(errors.modelo)}
+                  helperText={errors.modelo || 'Escriba el modelo del equipo'}
+                />
+              </Grid>
+
+              <Grid item xs={12} sm={6} md={3}>
                 <FormControl fullWidth>
                   <InputLabel id="estado-fisico-label">Estado Físico al Recibir *</InputLabel>
                   <Select
@@ -327,12 +375,13 @@ export default function Ingreso() {
 
               <Grid item xs={12} sm={6} md={6}>
                 <TextField
-                  label="Número de Parte (Part Number)"
-                  placeholder="Ej. PN-990-21A (si está disponible)"
+                  label="Número de Parte (Folio Único) *"
+                  placeholder="Ej. PN-990-21A"
                   fullWidth
                   value={form.numeroParte}
                   onChange={(e) => set('numeroParte', e.target.value)}
-                  helperText="Número de catálogo o parte del fabricante"
+                  error={Boolean(errors.numeroParte)}
+                  helperText={errors.numeroParte || "Se usará como el identificador único (Folio) del ingreso"}
                 />
               </Grid>
 
@@ -418,8 +467,8 @@ export default function Ingreso() {
                   <Typography variant="body2" fontWeight={600}>{new Date(ingresoCreado.fecha).toLocaleDateString('es-ES')}</Typography>
                 </Grid>
                 <Grid item xs={6}>
-                  <Typography variant="caption" color="text.secondary">Tipo & Modelo:</Typography>
-                  <Typography variant="body2" fontWeight={600}>{ingresoCreado.tipoEquipo.toUpperCase()} ({ingresoCreado.modelo})</Typography>
+                  <Typography variant="caption" color="text.secondary">Tipo, Marca & Modelo:</Typography>
+                  <Typography variant="body2" fontWeight={600}>{ingresoCreado.tipoEquipo.toUpperCase()} | {ingresoCreado.marca} {ingresoCreado.modelo}</Typography>
                 </Grid>
                 <Grid item xs={6}>
                   <Typography variant="caption" color="text.secondary">Número de Serie:</Typography>
@@ -469,6 +518,7 @@ export default function Ingreso() {
                 tipoEquipo: 'laptop',
                 cantidad: 1,
                 documentoReferencia: '',
+                marca: '',
                 modelo: '',
                 numeroParte: '',
                 numeroSerie: '',

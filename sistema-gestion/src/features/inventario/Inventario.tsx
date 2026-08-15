@@ -1,9 +1,9 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Box, Paper, Button, Typography, Table, TableBody, TableCell, TableContainer,
   TableHead, TableRow, IconButton, Chip, Snackbar, Alert, Card, CardContent, Grid,
-  Tooltip
+  Tooltip, CircularProgress
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import VisibilityIcon from '@mui/icons-material/Visibility';
@@ -12,14 +12,30 @@ import DeleteIcon from '@mui/icons-material/Delete';
 import DescriptionIcon from '@mui/icons-material/Description';
 import WarningAmberIcon from '@mui/icons-material/WarningAmber';
 import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline';
-import { getIngresos, getInspecciones, getModeloPorId, eliminarIngreso } from './service';
-import { ESTADO_LABELS, RESULTADO_LABELS } from './types';
+import {
+  getIngresos, getInspecciones, getModeloPorId,
+  cargarIngresosDesdeAPI, cargarInspeccionesDesdeAPI, eliminarIngresoAPI
+} from './service';
+import { IngresoEquipo, Inspeccion, ESTADO_LABELS, RESULTADO_LABELS } from './types';
 
 export default function Inventario() {
   const navigate = useNavigate();
   const [snack, setSnack] = useState('');
-  const ingresos = getIngresos();
-  const inspecciones = getInspecciones();
+  const [cargando, setCargando] = useState(true);
+  const [ingresos, setIngresos] = useState<IngresoEquipo[]>([]);
+  const [inspecciones, setInspecciones] = useState<Inspeccion[]>([]);
+
+  // Cargar datos desde la API al montar el componente
+  useEffect(() => {
+    const cargar = async () => {
+      setCargando(true);
+      await Promise.all([cargarIngresosDesdeAPI(), cargarInspeccionesDesdeAPI()]);
+      setIngresos(getIngresos());
+      setInspecciones(getInspecciones());
+      setCargando(false);
+    };
+    cargar();
+  }, []);
 
   const getInspeccion = (ingresoId: string) => inspecciones.find((i) => i.ingresoId === ingresoId);
 
@@ -33,10 +49,25 @@ export default function Inventario() {
   const completadas = inspecciones.filter((i) => i.estado === 'completada').length;
   const pendientesDoc = ingresos.filter((i) => i.estadoDocumental === 'pendiente_validacion').length;
 
-  const handleDelete = (id: string) => {
-    eliminarIngreso(id);
-    setSnack('Ingreso eliminado');
+  const handleDelete = async (id: string) => {
+    try {
+      await eliminarIngresoAPI(id);
+      setIngresos(getIngresos());
+      setInspecciones(getInspecciones());
+      setSnack('Ingreso eliminado correctamente');
+    } catch {
+      setSnack('Error al eliminar. Intenta de nuevo.');
+    }
   };
+
+  if (cargando) {
+    return (
+      <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', py: 8 }}>
+        <CircularProgress />
+        <Typography sx={{ ml: 2 }} color="text.secondary">Cargando inventario desde la base de datos...</Typography>
+      </Box>
+    );
+  }
 
   return (
     <Box>

@@ -159,11 +159,10 @@ export default function InspeccionPage() {
     : (PLANTILLA_GENERICA_SPECS[ingreso.tipoEquipo.toLowerCase()] || PLANTILLA_GENERICA_SPECS.generica);
 
   const specKeys = Object.keys(specsBase);
-  const checklistFisico = MAPA_CHECKLIST_POR_TIPO[ingreso.tipoEquipo.toLowerCase()] || MAPA_CHECKLIST_POR_TIPO.otro;
-
-  const checksFisicos = inspeccion && inspeccion.checklistFisico.length === checklistFisico.length
+  const CHECKLIST_GENERAL_SIZE = 8;
+  const checksFisicos = inspeccion && inspeccion.checklistFisico.length === CHECKLIST_GENERAL_SIZE
     ? inspeccion.checklistFisico
-    : checklistFisico.map(() => false);
+    : Array(CHECKLIST_GENERAL_SIZE).fill(false);
 
   const getModeloName = () => (modelo ? `${modelo.marca} ${modelo.nombre}` : ingreso.modelo || 'Modelo Sin Configuración Spec');
 
@@ -179,7 +178,7 @@ export default function InspeccionPage() {
   const handleCoincidenciaDato = (datoKey: 'marca' | 'modelo' | 'numeroParte' | 'numeroSerie') => {
     if (!inspeccion) return;
     const coincidenciaActual = inspeccion.documentacion.coincidenciaDatosClave || {
-      marca: true, modelo: true, numeroParte: true, numeroSerie: true
+      marca: false, modelo: false, numeroParte: false, numeroSerie: false
     };
     const nextCoincidencias = {
       ...coincidenciaActual,
@@ -735,24 +734,15 @@ export default function InspeccionPage() {
                       1. Documentos Disponibles / Adjuntos:
                     </Typography>
                     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5, mb: 2 }}>
-                      {([
-                        ['fichaTecnica', 'Ficha Técnica oficial del fabricante / equipo'],
-                        ['manuales', 'Manuales de operación / instalación / usuario'],
-                        ['certificados', 'Certificados de garantía / calibración / calidad'],
-                        ['etiquetas', 'Etiquetas documentadas o placas de serie legibles'],
-                        ['documentoReferencia', `Documento de referencia (${ingreso.documentoReferencia || 'Factura / Guía / Orden'})`]
-                      ] as const).map(([field, label]) => (
-                        <FormControlLabel
-                          key={field}
-                          control={
-                            <Checkbox
-                              checked={Boolean(inspeccion.documentacion[field])}
-                              onChange={() => handleDocCheckbox(field)}
-                            />
-                          }
-                          label={<Typography variant="body2">{label}</Typography>}
-                        />
-                      ))}
+                      <FormControlLabel
+                        control={
+                          <Checkbox
+                            checked={Boolean(inspeccion.documentacion.fichaTecnica)}
+                            onChange={() => handleDocCheckbox('fichaTecnica')}
+                          />
+                        }
+                        label={<Typography variant="body2">Ficha Técnica oficial del fabricante</Typography>}
+                      />
                     </Box>
 
                     <Divider sx={{ my: 2 }} />
@@ -766,13 +756,13 @@ export default function InspeccionPage() {
 
                     <Grid container spacing={1}>
                       {[
-                        ['marca', 'Marca coincide', `Esperado: ${modelo?.marca || 'N/A'}`],
+                        ['marca', 'Marca coincide', `Esperado: ${modelo?.marca || ingreso.marca || 'N/A'}`],
                         ['modelo', 'Modelo coincide', `Esperado: ${ingreso.modelo}`],
-                        ['numeroParte', 'Part Number coincide', `Esperado: ${ingreso.numeroParte || 'N/A'}`],
-                        ['numeroSerie', 'Número de Serie coincide', `Esperado: ${ingreso.numeroSerie || 'N/A'}`]
+                        ['numeroParte', 'Part Number coincide (si aplica)', `Esperado: ${ingreso.numeroParte || 'N/A'}`],
+                        ['numeroSerie', 'Número de Serie coincide (si aplica)', `Esperado: ${ingreso.numeroSerie || 'N/A'}`]
                       ].map(([key, label, subtitle]) => {
                         const coinc = inspeccion.documentacion.coincidenciaDatosClave || {
-                          marca: true, modelo: true, numeroParte: true, numeroSerie: true
+                          marca: false, modelo: false, numeroParte: false, numeroSerie: false
                         };
                         const val = coinc[key as keyof typeof coinc];
                         return (
@@ -856,7 +846,7 @@ export default function InspeccionPage() {
                   Caso de Uso 4: Ejecutar Inspección Física
                 </Typography>
                 <Typography variant="body2" color="text.secondary">
-                  Examine el estado físico visible del equipo y revise su checklist específico ({ingreso.tipoEquipo.toUpperCase()}).
+                  Examine el estado físico visible del equipo. Marque cada punto de la lista general de verificación y registre observaciones en la evaluación.
                 </Typography>
               </Box>
 
@@ -864,10 +854,19 @@ export default function InspeccionPage() {
                 <Grid item xs={12} md={7}>
                   <Paper variant="outlined" sx={{ p: 2 }}>
                     <Typography variant="subtitle2" fontWeight={700} gutterBottom color="primary">
-                      Lista de Verificación Física ({ingreso.tipoEquipo.toUpperCase()}):
+                      Lista de Verificación Física General:
                     </Typography>
                     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5, my: 1 }}>
-                      {checklistFisico.map((item, i) => (
+                      {[
+                        'Carcasa / Estructura exterior sin daños visibles',
+                        'Puertos y conectores físicamente íntegros',
+                        'Etiquetas y placa de identificación legibles',
+                        'Accesorios incluidos según lo esperado',
+                        'Empaque original o protección adecuada',
+                        'Sin signos de oxidación, humedad o corrosión',
+                        'Sin piezas rotas o faltantes',
+                        'Estado general acorde al tipo de recepción'
+                      ].map((item, i) => (
                         <FormControlLabel
                           key={i}
                           control={<Checkbox checked={Boolean(checksFisicos[i])} onChange={() => handleChecklist(i)} />}
@@ -905,15 +904,6 @@ export default function InspeccionPage() {
                       </Alert>
                     )}
 
-                    <TextField
-                      label="Seriales y Placa de Identificación Visibles"
-                      fullWidth
-                      size="small"
-                      sx={{ mb: 2 }}
-                      value={inspeccion.inspeccionFisica.serialesVisibles}
-                      onChange={(e) => handleFisica('serialesVisibles', e.target.value)}
-                      placeholder="Seriales legibles en chasis o etiquetas..."
-                    />
 
                     {/* Flujo Alterno: Registro de Accesorios Faltantes */}
                     <Box sx={{ bgcolor: '#f8fafc', p: 1.5, borderRadius: 1, border: '1px dashed #cbd5e1', mb: 2 }}>
@@ -940,16 +930,17 @@ export default function InspeccionPage() {
                     </Box>
 
                     <TextField
-                      label="Observaciones Físicas Específicas *"
+                      label="Observaciones Físicas *"
                       fullWidth
                       multiline
-                      rows={3}
+                      rows={4}
                       value={inspeccion.inspeccionFisica.observaciones}
                       onChange={(e) => handleFisica('observaciones', e.target.value)}
+                      placeholder="Registre aquí cualquier observación sobre el estado físico del equipo, daños, inconsistencias o notas relevantes..."
                       error={inspeccion.inspeccionFisica.condicionGeneral === 'con_dano' && !inspeccion.inspeccionFisica.observaciones}
                       helperText={
                         inspeccion.inspeccionFisica.condicionGeneral === 'con_dano' && !inspeccion.inspeccionFisica.observaciones
-                          ? 'Requerido por daño visible'
+                          ? 'Requerido cuando hay daño visible'
                           : ''
                       }
                     />
@@ -957,6 +948,7 @@ export default function InspeccionPage() {
                 </Grid>
               </Grid>
             </TabPanel>
+
 
             {/* TAB 3: CASO DE USO 5 - VERIFICAR ESPECIFICACIONES TÉCNICAS */}
             <TabPanel value={tab} index={3}>
@@ -1039,130 +1031,149 @@ export default function InspeccionPage() {
               </TableContainer>
             </TabPanel>
 
-            {/* TAB 4: CASO DE USO 6 - COMPARAR CONTRA REFERENCIA ESPERADA */}
+            {/* TAB 4: RESUMEN DE ESPECIFICACIONES DEL EQUIPO */}
             <TabPanel value={tab} index={4}>
               <Box sx={{ mb: 2 }}>
                 <Typography variant="h6" fontWeight={700} color="primary" gutterBottom>
-                  Caso de Uso 6: Comparar contra Referencia Esperada
+                  Resumen de Especificaciones del Equipo
                 </Typography>
                 <Typography variant="body2" color="text.secondary">
-                  El sistema analiza la diferencia entre las especificaciones requeridas, los datos documentales y la verificación real.
+                  Vista consolidada de los atributos técnicos verificados durante la inspección.
                 </Typography>
               </Box>
 
-              {/* Resumen de Conformidad */}
-              <Grid container spacing={2} sx={{ mb: 3 }}>
-                <Grid item xs={12} sm={6} md={3}>
-                  <Card variant="outlined" sx={{ bgcolor: '#f0fdf4', borderColor: '#bbf7d0' }}>
-                    <CardContent sx={{ textAlign: 'center', py: 1.5, '&:last-child': { pb: 1.5 } }}>
-                      <Typography variant="h4" fontWeight={700} color="success.main">{comparativo.coinciden}</Typography>
-                      <Typography variant="body2" color="success.dark" fontWeight={600}>Atributos Coincidentes</Typography>
-                    </CardContent>
-                  </Card>
+              {/* Tarjeta de identificación del equipo */}
+              <Paper variant="outlined" sx={{ p: 2.5, mb: 3, bgcolor: '#f8fafc' }}>
+                <Typography variant="subtitle2" fontWeight={700} color="primary.main" gutterBottom>
+                  Datos de Identificación del Equipo
+                </Typography>
+                <Grid container spacing={2}>
+                  {[
+                    ['Tipo de Equipo', ingreso.tipoEquipo.toUpperCase()],
+                    ['Marca', ingreso.marca || modelo?.marca || 'No especificada'],
+                    ['Modelo', ingreso.modelo || 'No especificado'],
+                    ['Número de Parte (Folio)', ingreso.numeroParte || ingreso.folio],
+                    ['Número de Serie', ingreso.numeroSerie || 'No registrado'],
+                    ['Proveedor', ingreso.proveedor],
+                    ['Fecha de Ingreso', new Date(ingreso.fecha).toLocaleDateString('es-ES')],
+                    ['Estado Físico', ingreso.estadoFisico],
+                  ].map(([label, value]) => (
+                    <Grid item xs={12} sm={6} md={3} key={label}>
+                      <Box>
+                        <Typography variant="caption" color="text.secondary" fontWeight={600}>
+                          {label}
+                        </Typography>
+                        <Typography variant="body2" fontWeight={700}>
+                          {value}
+                        </Typography>
+                      </Box>
+                    </Grid>
+                  ))}
                 </Grid>
-                <Grid item xs={12} sm={6} md={3}>
-                  <Card variant="outlined" sx={{ bgcolor: '#fef2f2', borderColor: '#fecaca' }}>
-                    <CardContent sx={{ textAlign: 'center', py: 1.5, '&:last-child': { pb: 1.5 } }}>
-                      <Typography variant="h4" fontWeight={700} color="error.main">{comparativo.diferentes}</Typography>
-                      <Typography variant="body2" color="error.dark" fontWeight={600}>Diferencias Detectadas</Typography>
-                    </CardContent>
-                  </Card>
-                </Grid>
-                <Grid item xs={12} sm={6} md={3}>
-                  <Card variant="outlined" sx={{ bgcolor: '#fffbeb', borderColor: '#fde68a' }}>
-                    <CardContent sx={{ textAlign: 'center', py: 1.5, '&:last-child': { pb: 1.5 } }}>
-                      <Typography variant="h4" fontWeight={700} color="warning.main">{comparativo.pendientes}</Typography>
-                      <Typography variant="body2" color="warning.dark" fontWeight={600}>Campos Pendientes</Typography>
-                    </CardContent>
-                  </Card>
-                </Grid>
-                <Grid item xs={12} sm={6} md={3}>
-                  <Card variant="outlined" sx={{ bgcolor: '#f8fafc', borderColor: '#cbd5e1' }}>
-                    <CardContent sx={{ textAlign: 'center', py: 1.5, '&:last-child': { pb: 1.5 } }}>
-                      <Typography variant="h4" fontWeight={700} color="primary.main">{comparativo.porcentaje}%</Typography>
-                      <Typography variant="body2" color="text.secondary" fontWeight={600}>Índice Conformidad Technical</Typography>
-                    </CardContent>
-                  </Card>
-                </Grid>
-              </Grid>
+              </Paper>
 
-              {comparativo.esIncompleto && (
-                <Alert severity="warning" sx={{ mb: 2 }}>
-                  <strong>Flujo Alterno:</strong> Se detectaron {comparativo.pendientes} campos pendientes de verificación. El dictamen comparativo actual se clasifica como <strong>"Incompleto (campos pendientes)"</strong>.
-                </Alert>
-              )}
-
-              {!modelo && (
-                <Alert severity="info" sx={{ mb: 2 }}>
-                  <strong>Flujo Alterno:</strong> No existe especificación de catálogo esperada. Se realiza la comparación directa contra los datos del documento de recepción/ingreso.
-                </Alert>
-              )}
-
-              <TableContainer component={Paper} variant="outlined">
-                <Table size="small">
-                  <TableHead>
-                    <TableRow sx={{ bgcolor: '#f1f5f9' }}>
-                      <TableCell><strong>ATRIBUTO / CRITERIO</strong></TableCell>
-                      <TableCell><strong>REFERENCIA ESPERADA</strong></TableCell>
-                      <TableCell><strong>VERIFICADO EN REVISIÓN</strong></TableCell>
-                      <TableCell align="center"><strong>ESTADO DE CONFORMIDAD</strong></TableCell>
-                    </TableRow>
-                  </TableHead>
-                  <TableBody>
-                    {/* Fila de Datos Clave Documentales */}
-                    <TableRow sx={{ bgcolor: '#fafafa' }}>
-                      <TableCell colSpan={4}>
-                        <Typography variant="caption" fontWeight={700} color="primary.main">COMPARACIÓN DE DATOS CLAVE DOCUMENTALES:</Typography>
-                      </TableCell>
-                    </TableRow>
-                    {[
-                      ['Marca', modelo?.marca || 'Según Recepción', ingreso.modelo, inspeccion.documentacion.coincidenciaDatosClave?.marca ?? true],
-                      ['Modelo', modelo?.nombre || ingreso.modelo, getModeloName(), inspeccion.documentacion.coincidenciaDatosClave?.modelo ?? true],
-                      ['Número de Serie', ingreso.numeroSerie || 'Registrado', inspeccion.inspeccionFisica.serialesVisibles || ingreso.numeroSerie || 'S/N', inspeccion.documentacion.coincidenciaDatosClave?.numeroSerie ?? true]
-                    ].map(([crit, esp, verif, coincide]) => (
-                      <TableRow key={crit} hover>
-                        <TableCell><Typography variant="body2" fontWeight={600}>{crit}</Typography></TableCell>
-                        <TableCell><Typography variant="body2" color="text.secondary">{String(esp)}</Typography></TableCell>
-                        <TableCell><Typography variant="body2">{String(verif)}</Typography></TableCell>
-                        <TableCell align="center">
-                          <Chip
-                            size="small"
-                            label={coincide ? 'Coincide' : 'Discrepancia'}
-                            color={coincide ? 'success' : 'error'}
-                            sx={{ fontWeight: 700 }}
-                          />
-                        </TableCell>
-                      </TableRow>
-                    ))}
-
-                    {/* Filas de Atributos Técnicos */}
-                    <TableRow sx={{ bgcolor: '#fafafa' }}>
-                      <TableCell colSpan={4}>
-                        <Typography variant="caption" fontWeight={700} color="primary.main">COMPARACIÓN DE ATRIBUTOS TÉCNICOS:</Typography>
-                      </TableCell>
-                    </TableRow>
+              {/* Especificaciones técnicas verificadas */}
+              <Paper variant="outlined" sx={{ p: 2.5, mb: 3 }}>
+                <Typography variant="subtitle2" fontWeight={700} color="primary.main" gutterBottom>
+                  Especificaciones Técnicas Verificadas
+                </Typography>
+                {specKeys.length === 0 ? (
+                  <Alert severity="info">No hay especificaciones técnicas configuradas para este tipo de equipo.</Alert>
+                ) : (
+                  <Grid container spacing={2} sx={{ mt: 0.5 }}>
                     {specKeys.map((spec) => {
-                      const expected = specsBase[spec];
-                      const real = inspeccion.verificacionTecnica[spec]?.valor || '---';
-                      const cmp = getComparison(spec);
+                      const valState = inspeccion.verificacionTecnica[spec];
+                      const valor = valState?.valor;
+                      const estado = valState?.estado || 'pendiente';
+                      const estadoColor = estado === 'verificado' ? 'success' : estado === 'no_aplica' ? 'default' : 'warning';
+                      const estadoLabel = estado === 'verificado' ? 'Verificado' : estado === 'no_aplica' ? 'No aplica' : 'Pendiente';
                       return (
-                        <TableRow key={spec} hover>
-                          <TableCell>
-                            <Typography variant="body2" fontWeight={600} sx={{ textTransform: 'capitalize' }}>
-                              {spec.replace(/([A-Z])/g, ' $1')}
+                        <Grid item xs={12} sm={6} md={4} key={spec}>
+                          <Paper
+                            variant="outlined"
+                            sx={{
+                              p: 1.5,
+                              height: '100%',
+                              bgcolor: estado === 'verificado' ? '#f0fdf4' : estado === 'no_aplica' ? '#f8fafc' : '#fffbeb',
+                              borderColor: estado === 'verificado' ? '#bbf7d0' : estado === 'no_aplica' ? '#e2e8f0' : '#fde68a',
+                            }}
+                          >
+                            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 0.5 }}>
+                              <Typography variant="caption" color="text.secondary" fontWeight={600} sx={{ textTransform: 'capitalize' }}>
+                                {spec.replace(/([A-Z])/g, ' $1')}
+                              </Typography>
+                              <Chip size="small" label={estadoLabel} color={estadoColor as any} sx={{ fontSize: '0.65rem', height: 18 }} />
+                            </Box>
+                            <Typography variant="body2" fontWeight={700}>
+                              {valor || <em style={{ color: '#94a3b8', fontWeight: 400 }}>Sin valor registrado</em>}
                             </Typography>
-                          </TableCell>
-                          <TableCell><Typography variant="body2" color="text.secondary">{expected}</Typography></TableCell>
-                          <TableCell><Typography variant="body2">{real}</Typography></TableCell>
-                          <TableCell align="center">
-                            <Chip size="small" label={cmp.label} color={cmp.color} sx={{ fontWeight: 700 }} />
-                          </TableCell>
-                        </TableRow>
+                          </Paper>
+                        </Grid>
                       );
                     })}
-                  </TableBody>
-                </Table>
-              </TableContainer>
+                  </Grid>
+                )}
+              </Paper>
+
+              {/* Estado del checklist físico */}
+              <Paper variant="outlined" sx={{ p: 2.5 }}>
+                <Typography variant="subtitle2" fontWeight={700} color="primary.main" gutterBottom>
+                  Estado de la Verificación Física
+                </Typography>
+                <Grid container spacing={2}>
+                  <Grid item xs={12} sm={4}>
+                    <Box sx={{ textAlign: 'center', p: 1.5, bgcolor: '#f0fdf4', borderRadius: 2, border: '1px solid #bbf7d0' }}>
+                      <Typography variant="h4" fontWeight={800} color="success.main">
+                        {checksFisicos.filter(Boolean).length}
+                      </Typography>
+                      <Typography variant="body2" color="success.dark" fontWeight={600}>Ítems Aprobados</Typography>
+                    </Box>
+                  </Grid>
+                  <Grid item xs={12} sm={4}>
+                    <Box sx={{ textAlign: 'center', p: 1.5, bgcolor: '#fef2f2', borderRadius: 2, border: '1px solid #fecaca' }}>
+                      <Typography variant="h4" fontWeight={800} color="error.main">
+                        {checksFisicos.filter((v) => !v).length}
+                      </Typography>
+                      <Typography variant="body2" color="error.dark" fontWeight={600}>Ítems Pendientes</Typography>
+                    </Box>
+                  </Grid>
+                  <Grid item xs={12} sm={4}>
+                    <Box sx={{ textAlign: 'center', p: 1.5, bgcolor: '#f8fafc', borderRadius: 2, border: '1px solid #e2e8f0' }}>
+                      <Typography variant="h4" fontWeight={800} color="primary.main">
+                        {Math.round((checksFisicos.filter(Boolean).length / checksFisicos.length) * 100)}%
+                      </Typography>
+                      <Typography variant="body2" color="text.secondary" fontWeight={600}>Completitud Física</Typography>
+                    </Box>
+                  </Grid>
+                </Grid>
+
+                {inspeccion.inspeccionFisica.condicionGeneral && (
+                  <Box sx={{ mt: 2 }}>
+                    <Typography variant="caption" color="text.secondary" fontWeight={600}>Condición General:</Typography>
+                    <Chip
+                      sx={{ ml: 1 }}
+                      size="small"
+                      label={
+                        inspeccion.inspeccionFisica.condicionGeneral === 'sin_dano' ? 'Sin daño' :
+                        inspeccion.inspeccionFisica.condicionGeneral === 'con_observaciones' ? 'Con observaciones' : 'Con daño visible'
+                      }
+                      color={
+                        inspeccion.inspeccionFisica.condicionGeneral === 'sin_dano' ? 'success' :
+                        inspeccion.inspeccionFisica.condicionGeneral === 'con_observaciones' ? 'warning' : 'error'
+                      }
+                    />
+                  </Box>
+                )}
+
+                {inspeccion.inspeccionFisica.observaciones && (
+                  <Box sx={{ mt: 1.5 }}>
+                    <Typography variant="caption" color="text.secondary" fontWeight={600}>Observaciones físicas:</Typography>
+                    <Typography variant="body2" sx={{ mt: 0.5, pl: 1, borderLeft: '3px solid #e2e8f0' }}>
+                      {inspeccion.inspeccionFisica.observaciones}
+                    </Typography>
+                  </Box>
+                )}
+              </Paper>
             </TabPanel>
 
             {/* TAB 5: CASO DE USO 7 - REGISTRAR HALLAZGOS */}
@@ -1185,6 +1196,9 @@ export default function InspeccionPage() {
                         value={nuevoHallazgo.tipo}
                         onChange={(e) => setNuevoHallazgo((h) => ({ ...h, tipo: e.target.value as any }))}
                       >
+                        <MenuItem value="sin_hallazgos">
+                          <em>✓ Sin hallazgos importantes detectados</em>
+                        </MenuItem>
                         <MenuItem value="documental">Documental (Discrepancia / Faltante)</MenuItem>
                         <MenuItem value="fisico">Físico (Daño / Golpe / Desgaste)</MenuItem>
                         <MenuItem value="tecnico">Técnico (Incompatibilidad / Falla)</MenuItem>
@@ -1301,12 +1315,38 @@ export default function InspeccionPage() {
 
             {/* TAB 6: CASO DE USO 8 - ADJUNTAR EVIDENCIA */}
             <TabPanel value={tab} index={6}>
+
+              {/* Sección: Documento registrado al crear el equipo */}
+              <Paper variant="outlined" sx={{ p: 2.5, mb: 3, bgcolor: '#f8fafc' }}>
+                <Typography variant="subtitle1" fontWeight={700} color="primary.main" gutterBottom>
+                  Ficha Técnica / Documento Registrado al Ingreso
+                </Typography>
+
+                {ingreso.documentoReferencia ? (
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, p: 1.5, bgcolor: '#f0fdf4', borderRadius: 2, border: '1px solid #bbf7d0' }}>
+                    <DescriptionIcon color="success" sx={{ fontSize: 36 }} />
+                    <Box sx={{ flexGrow: 1 }}>
+                      <Typography variant="body1" fontWeight={700}>{ingreso.documentoReferencia}</Typography>
+                      <Typography variant="caption" color="text.secondary">
+                        Documento registrado al momento del ingreso del equipo
+                      </Typography>
+                    </Box>
+                    <Chip icon={<CheckCircleOutlineIcon />} label="Documento disponible" color="success" variant="outlined" />
+                  </Box>
+                ) : (
+                  <Alert severity="warning">
+                    <strong>Ficha técnica pendiente:</strong> No se adjuntó ningún documento al registrar este equipo. Puede subirlo utilizando la sección de **Evidencia Adicional** (abajo), seleccionando la etapa **"Validación Documental"**.
+                  </Alert>
+                )}
+              </Paper>
+
+              {/* Sección: Agregar otras evidencias */}
               <Paper variant="outlined" sx={{ p: 2.5, mb: 3 }}>
                 <Typography variant="h6" fontWeight={700} gutterBottom color="primary">
-                  Caso de Uso 8: Adjuntar Evidencia Documental o Visual
+                  Adjuntar Evidencia Adicional
                 </Typography>
                 <Typography variant="body2" color="text.secondary" paragraph>
-                  Respalde las observaciones o no conformidades adjuntando fotografías, capturas o archivos de soporte.
+                  Respalde las observaciones adjuntando fotografías, capturas o archivos de soporte adicionales.
                 </Typography>
 
                 <Grid container spacing={2}>
@@ -1323,24 +1363,6 @@ export default function InspeccionPage() {
                         <MenuItem value="inspeccion_fisica">Inspección Física</MenuItem>
                         <MenuItem value="verificacion_tecnica">Verificación Técnica</MenuItem>
                         <MenuItem value="general">Expediente General</MenuItem>
-                      </Select>
-                    </FormControl>
-                  </Grid>
-                  <Grid item xs={12} md={6}>
-                    <FormControl fullWidth>
-                      <InputLabel id="hallazgo-ev-label">Asociar a Hallazgo Específico (Opcional)</InputLabel>
-                      <Select
-                        labelId="hallazgo-ev-label"
-                        label="Asociar a Hallazgo Específico (Opcional)"
-                        value={nuevaEvidencia.hallazgoId}
-                        onChange={(e) => setNuevaEvidencia((ev) => ({ ...ev, hallazgoId: e.target.value }))}
-                      >
-                        <MenuItem value="">Ninguno (Evidencia General)</MenuItem>
-                        {inspeccion.hallazgos.map((h) => (
-                          <MenuItem key={h.id} value={h.id}>
-                            [{h.severidad.toUpperCase()}] {h.tipo}: {h.descripcion.slice(0, 35)}...
-                          </MenuItem>
-                        ))}
                       </Select>
                     </FormControl>
                   </Grid>
@@ -1422,6 +1444,8 @@ export default function InspeccionPage() {
                 <Alert severity="info">No se han adjuntado evidencias fotográficas o documentales todavía.</Alert>
               )}
             </TabPanel>
+
+
 
             {/* TAB 7: CASOS DE USO 9 & 10 - DICTAMEN DE RESULTADO Y DISPOSICIÓN FINAL */}
             <TabPanel value={tab} index={7}>
