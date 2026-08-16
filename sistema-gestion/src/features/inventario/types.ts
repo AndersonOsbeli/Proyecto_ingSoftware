@@ -14,24 +14,40 @@ export type SeveridadHallazgo = 'baja' | 'media' | 'alta' | 'critica';
 
 export type EstadoDocumentalIngreso = 'con_documento' | 'pendiente_validacion';
 
+export interface Especificacion {
+  id: string;
+  nombre: string;
+  valor: string;
+  aplica: boolean;
+  esPredeterminada?: boolean;
+  ejemplo?: string;
+}
+
 export interface IngresoEquipo {
   id: string;
-  folio: string;
-  fecha: string;
-  origen: 'proveedor' | 'interno' | 'donacion' | 'cliente' | 'otro';
+  tipoProducto: string;
   proveedor: string;
+  fechaIngreso: string;
   cantidad: number;
-  documentoReferencia: string;
-  estadoDocumental: EstadoDocumentalIngreso;
-  tipoEquipo: string;
-  marca?: string;
-  modelo: string;
-  numeroParte: string;
-  numeroSerie: string;
-  estadoFisico: 'Nuevo' | 'Usado - Bueno' | 'Usado - Danado';
-  observaciones: string;
+  codigoBarras: string;
+  especificaciones: Especificacion[];
   registradoPor: string;
   fechaRegistro?: string;
+  ubicacion?: string;
+  activo?: boolean;
+  
+  // Legacy fields para evitar que otras pantallas rompan mientras se migra
+  folio?: string;
+  origen?: string;
+  documentoReferencia?: string;
+  estadoDocumental?: EstadoDocumentalIngreso;
+  tipoEquipo?: string;
+  marca?: string;
+  modelo?: string;
+  numeroParte?: string;
+  numeroSerie?: string;
+  estadoFisico?: string;
+  observaciones?: string;
 }
 
 export interface DocumentacionValidacion {

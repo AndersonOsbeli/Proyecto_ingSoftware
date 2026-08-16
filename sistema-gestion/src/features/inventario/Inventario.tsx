@@ -6,17 +6,15 @@ import {
   Tooltip, CircularProgress
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
-import VisibilityIcon from '@mui/icons-material/Visibility';
-import AssignmentIcon from '@mui/icons-material/Assignment';
-import DeleteIcon from '@mui/icons-material/Delete';
-import DescriptionIcon from '@mui/icons-material/Description';
-import WarningAmberIcon from '@mui/icons-material/WarningAmber';
-import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline';
+import EditIcon from '@mui/icons-material/Edit';
+import BlockIcon from '@mui/icons-material/Block';
+import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import {
-  getIngresos, getInspecciones, getModeloPorId,
-  cargarIngresosDesdeAPI, cargarInspeccionesDesdeAPI, eliminarIngresoAPI
+  getIngresos, getInspecciones,
+  cargarIngresosDesdeAPI, cargarInspeccionesDesdeAPI, toggleActivoIngreso
 } from './service';
-import { IngresoEquipo, Inspeccion, ESTADO_LABELS, RESULTADO_LABELS } from './types';
+import { IngresoEquipo, Inspeccion } from './types';
+import Barcode from 'react-barcode';
 
 export default function Inventario() {
   const navigate = useNavigate();
@@ -37,26 +35,13 @@ export default function Inventario() {
     cargar();
   }, []);
 
-  const getInspeccion = (ingresoId: string) => inspecciones.find((i) => i.ingresoId === ingresoId);
-
-  const getModeloName = (modeloId: string) => {
-    const m = getModeloPorId(modeloId);
-    return m ? `${m.marca} ${m.nombre}` : modeloId;
-  };
-
-  const sinInspeccion = ingresos.filter((i) => !getInspeccion(i.id)).length;
-  const enProceso = inspecciones.filter((i) => i.estado !== 'completada').length;
-  const completadas = inspecciones.filter((i) => i.estado === 'completada').length;
-  const pendientesDoc = ingresos.filter((i) => i.estadoDocumental === 'pendiente_validacion').length;
-
-  const handleDelete = async (id: string) => {
+  const handleToggleActivo = (id: string, activoActual: boolean) => {
     try {
-      await eliminarIngresoAPI(id);
+      toggleActivoIngreso(id);
       setIngresos(getIngresos());
-      setInspecciones(getInspecciones());
-      setSnack('Ingreso eliminado correctamente');
+      setSnack(`Producto ${activoActual ? 'desactivado' : 'activado'} correctamente`);
     } catch {
-      setSnack('Error al eliminar. Intenta de nuevo.');
+      setSnack('Error al cambiar el estado. Intenta de nuevo.');
     }
   };
 
@@ -73,9 +58,9 @@ export default function Inventario() {
     <Box>
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
         <Box>
-          <Typography variant="h5" fontWeight={700}>Gestión de Inventario</Typography>
+          <Typography variant="h5" fontWeight={700}>Gestión de Inventario (Nuevo Módulo)</Typography>
           <Typography variant="body2" color="text.secondary">
-            Registro de ingresos y ciclo de inspección de equipos
+            Registro de productos y especificaciones
           </Typography>
         </Box>
         <Button
@@ -84,16 +69,14 @@ export default function Inventario() {
           onClick={() => navigate('/inventario/ingreso')}
           sx={{ fontWeight: 600 }}
         >
-          Registrar Ingreso
+          Registrar Producto
         </Button>
       </Box>
 
       <Grid container spacing={2} sx={{ mb: 3 }}>
         {[
-          { label: 'Total Ingresos', value: ingresos.length, color: '#1E40AF' },
-          { label: 'Pendiente Doc.', value: pendientesDoc, color: '#D97706' },
-          { label: 'Sin Inspección', value: sinInspeccion, color: '#DC2626' },
-          { label: 'Completadas', value: completadas, color: '#166534' }
+          { label: 'Total Productos', value: ingresos.length, color: '#1E40AF' },
+          { label: 'Tipos Únicos', value: new Set(ingresos.map(i => i.tipoProducto || i.tipoEquipo)).size, color: '#D97706' },
         ].map((s) => (
           <Grid item xs={12} sm={6} md={3} key={s.label}>
             <Card sx={{ borderLeft: `4px solid ${s.color}` }}>
@@ -112,81 +95,59 @@ export default function Inventario() {
             <Table size="small">
               <TableHead>
                 <TableRow>
-                  <TableCell><strong>Folio (ID)</strong></TableCell>
-                  <TableCell><strong>Fecha</strong></TableCell>
-                  <TableCell><strong>Proveedor / Modelo</strong></TableCell>
-                  <TableCell><strong>No. Serie</strong></TableCell>
-                  <TableCell><strong>Estado Documental</strong></TableCell>
-                  <TableCell><strong>Estado Inspección</strong></TableCell>
-                  <TableCell><strong>Resultado</strong></TableCell>
+                  <TableCell><strong>Código de Barras</strong></TableCell>
+                  <TableCell><strong>Fecha Ingreso</strong></TableCell>
+                  <TableCell><strong>Tipo Producto</strong></TableCell>
+                  <TableCell><strong>Ubicación</strong></TableCell>
+                  <TableCell><strong>Proveedor</strong></TableCell>
+                  <TableCell><strong>Cantidad</strong></TableCell>
+                  <TableCell><strong>Especificaciones</strong></TableCell>
                   <TableCell align="right"><strong>Acciones</strong></TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
                 {ingresos.map((i) => {
-                  const ins = getInspeccion(i.id);
-                  const sinDoc = i.estadoDocumental === 'pendiente_validacion' || !i.documentoReferencia;
+                  const numSpecs = i.especificaciones?.filter(e => e.aplica).length || 0;
+                  // Soporte para los datos viejos si aún existen (legacy)
+                  const codigo = i.codigoBarras || i.folio || i.id;
+                  const fecha = i.fechaIngreso || i.fechaRegistro || (i as any).fecha;
+                  const tipo = i.tipoProducto || i.tipoEquipo || 'N/A';
 
                   return (
-                    <TableRow key={i.id} hover>
+                    <TableRow 
+                      key={i.id} 
+                      hover 
+                      sx={{ 
+                        opacity: i.activo !== false ? 1 : 0.4,
+                        bgcolor: i.activo !== false ? 'inherit' : 'rgba(0,0,0,0.04)',
+                        transition: 'opacity 0.3s ease'
+                      }}
+                    >
                       <TableCell>
-                        <Chip label={i.folio} size="small" variant="outlined" color="primary" sx={{ fontWeight: 700 }} />
+                        <Box sx={{ maxWidth: '200px', overflow: 'hidden' }}>
+                          <Barcode value={codigo || 'N/A'} height={30} width={1.2} fontSize={12} displayValue={true} background="transparent" />
+                        </Box>
                       </TableCell>
-                      <TableCell>{new Date(i.fecha).toLocaleDateString('es-ES')}</TableCell>
+                      <TableCell>{fecha ? new Date(fecha).toLocaleDateString('es-ES') : 'N/A'}</TableCell>
+                      <TableCell>{tipo}</TableCell>
+                      <TableCell>{i.ubicacion || 'Sin asignar'}</TableCell>
+                      <TableCell>{i.proveedor}</TableCell>
+                      <TableCell>{i.cantidad}</TableCell>
                       <TableCell>
-                        <Typography variant="body2" fontWeight={600}>{getModeloName(i.modelo)}</Typography>
-                        <Typography variant="caption" color="text.secondary">{i.proveedor}</Typography>
+                        <Chip size="small" label={`${numSpecs} config.`} color="info" />
                       </TableCell>
-                      <TableCell>{i.numeroSerie || 'S/N'}</TableCell>
-                      <TableCell>
-                        {sinDoc ? (
-                          <Tooltip title="Sin documento de referencia registrado. Pendiente de validación documental.">
-                            <Chip
-                              size="small"
-                              icon={<WarningAmberIcon />}
-                              label="Pendiente Doc."
-                              color="warning"
-                              variant="filled"
-                            />
-                          </Tooltip>
-                        ) : (
-                          <Tooltip title={`Documento: ${i.documentoReferencia}`}>
-                            <Chip
-                              size="small"
-                              icon={<CheckCircleOutlineIcon />}
-                              label="Documentado"
-                              color="success"
-                              variant="outlined"
-                            />
-                          </Tooltip>
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        {ins ? (
-                          <Chip size="small" label={ESTADO_LABELS[ins.estado] || ins.estado} color="info" />
-                        ) : (
-                          <Chip size="small" label="Disponible p/ Inspección" color="secondary" variant="outlined" />
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        {ins?.resultado ? (
-                          <Chip size="small" label={RESULTADO_LABELS[ins.resultado]} color="primary" variant="outlined" />
-                        ) : (
-                          <Typography variant="body2" color="text.disabled">---</Typography>
-                        )}
-                      </TableCell>
-                      <TableCell align="right">
-                        <Tooltip title={ins ? 'Ver expediente' : 'Iniciar Apertura de Inspección'}>
-                          <IconButton
-                            color="primary"
-                            onClick={() => navigate(`/inventario/inspeccion/${i.id}`)}
-                          >
-                            {ins ? <VisibilityIcon /> : <AssignmentIcon />}
+                      <TableCell align="right" sx={{ whiteSpace: 'nowrap' }}>
+                        <Tooltip title="Editar producto">
+                          <IconButton color="primary" onClick={() => setSnack('Función de edición en construcción')}>
+                            <EditIcon />
                           </IconButton>
                         </Tooltip>
-                        <Tooltip title="Eliminar ingreso">
-                          <IconButton color="error" onClick={() => handleDelete(i.id)}>
-                            <DeleteIcon />
+                        <Tooltip title={i.activo !== false ? 'Desactivar producto' : 'Activar producto'}>
+                          <IconButton 
+                            color={i.activo !== false ? "error" : "success"} 
+                            onClick={() => handleToggleActivo(i.id, i.activo !== false)}
+                          >
+                            {i.activo !== false ? <BlockIcon /> : <CheckCircleIcon />}
                           </IconButton>
                         </Tooltip>
                       </TableCell>
@@ -198,9 +159,9 @@ export default function Inventario() {
           </TableContainer>
         ) : (
           <Box sx={{ textAlign: 'center', py: 4 }}>
-            <Typography color="text.secondary" gutterBottom>No hay ingresos registrados en el sistema</Typography>
+            <Typography color="text.secondary" gutterBottom>No hay productos registrados</Typography>
             <Button variant="contained" onClick={() => navigate('/inventario/ingreso')}>
-              Registrar Primer Ingreso
+              Registrar Primer Producto
             </Button>
           </Box>
         )}

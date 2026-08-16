@@ -5,17 +5,7 @@ import {
 } from './types';
 import { registrar as registrarAuditoria } from '../empleados/service-auditoria';
 import { TipoAccionAuditoria } from '../empleados/types';
-import {
-  apiGetIngresos,
-  apiGetIngresoPorId,
-  apiRegistrarIngreso,
-  apiEliminarIngreso,
-  apiGetInspecciones,
-  apiGetInspeccionPorId,
-  apiGetInspeccionPorIngreso,
-  apiCrearInspeccion,
-  apiActualizarInspeccion
-} from './api';
+// API imports removed for local testing
 
 // ─── Stores locales (caché en memoria mientras se migra a la API) ──────────────
 const KEY_INGRESOS = 'sg_inventario';
@@ -73,12 +63,7 @@ export function getIngresoPorId(id: string): IngresoEquipo | undefined {
  * Llama esta función al montar el componente de inventario.
  */
 export async function cargarIngresosDesdeAPI(): Promise<void> {
-  try {
-    const ingresos = await apiGetIngresos();
-    ingresosStore.set(ingresos);
-  } catch (err) {
-    console.error('No se pudo conectar con la API. Usando datos locales.', err);
-  }
+  // Local mode: do nothing, relies on localStorage
 }
 
 /**
@@ -90,10 +75,7 @@ export async function registrarIngresoAPI(
   data: Omit<IngresoEquipo, 'id' | 'folio'>,
   archivo?: File
 ): Promise<IngresoEquipo> {
-  const nuevo = await apiRegistrarIngreso(data, archivo);
-  ingresosStore.set([nuevo, ...getIngresos()]);
-  auditar('crear', nuevo.folio, `Ingreso de equipo registrado (${nuevo.modelo}). Estado documental: ${nuevo.estadoDocumental}`, null, nuevo);
-  return nuevo;
+  return registrarIngreso(data);
 }
 
 /**
@@ -106,21 +88,18 @@ export function registrarIngreso(data: Omit<IngresoEquipo, 'id' | 'folio'>): Ing
   const nuevo: IngresoEquipo = {
     ...data,
     id: genId(),
-    folio: data.numeroParte,
+    folio: (data as any).codigoBarras || data.numeroParte || genId(),
     estadoDocumental: estadoDoc,
-    fechaRegistro: new Date().toISOString()
+    fechaRegistro: new Date().toISOString(),
+    activo: true
   };
   ingresosStore.set([nuevo, ...getIngresos()]);
-  auditar('crear', nuevo.folio, `Ingreso local (${nuevo.modelo}). Estado documental: ${estadoDoc}`, null, nuevo);
+  auditar('crear', nuevo.folio || '', `Ingreso local (${nuevo.modelo || nuevo.tipoProducto}). Estado documental: ${estadoDoc}`, null, nuevo);
   return nuevo;
 }
 
 export async function eliminarIngresoAPI(id: string): Promise<void> {
-  const prev = getIngresoPorId(id);
-  await apiEliminarIngreso(id);
-  ingresosStore.set(getIngresos().filter((i) => i.id !== id));
-  inspeccionesStore.set(getInspecciones().filter((i) => i.ingresoId !== id));
-  auditar('eliminar', prev?.folio || id, `Ingreso eliminado con su expediente`, prev ?? null, null);
+  eliminarIngreso(id);
 }
 
 export function eliminarIngreso(id: string): void {
@@ -128,6 +107,22 @@ export function eliminarIngreso(id: string): void {
   ingresosStore.set(getIngresos().filter((i) => i.id !== id));
   inspeccionesStore.set(getInspecciones().filter((i) => i.ingresoId !== id));
   auditar('eliminar', prev?.folio || id, `Ingreso eliminado con su expediente`, prev ?? null, null);
+}
+
+export function toggleActivoIngreso(id: string): void {
+  const all = getIngresos();
+  const index = all.findIndex(i => i.id === id);
+  if (index !== -1) {
+    const item = all[index];
+    // Por defecto es true si es undefined
+    const esActivo = item.activo !== false;
+    const newActivo = !esActivo;
+    const updated = { ...item, activo: newActivo };
+    all[index] = updated;
+    ingresosStore.set([...all]);
+    // Optional audit log for deactivate/activate
+    // auditar('editar', item.folio || id, `Ingreso ${newActivo ? 'activado' : 'desactivado'}`);
+  }
 }
 
 // ─── INSPECCIONES (Lectura sincrónica desde caché local) ───────────────────────
@@ -147,12 +142,7 @@ export function getInspeccionPorIngreso(ingresoId: string): Inspeccion | undefin
  * Carga las inspecciones desde la API y actualiza el caché local.
  */
 export async function cargarInspeccionesDesdeAPI(): Promise<void> {
-  try {
-    const inspecciones = await apiGetInspecciones();
-    inspeccionesStore.set(inspecciones);
-  } catch (err) {
-    console.error('No se pudo cargar inspecciones desde la API. Usando datos locales.', err);
-  }
+  // Local mode: do nothing
 }
 
 function nuevaInspeccionVacia(ingresoId: string, usuario: string): Inspeccion {
@@ -186,24 +176,7 @@ export async function crearInspeccionAPI(
   usuario: string,
   estadoInicial: 'pendiente_revision' | 'cuarentena_tecnica' = 'pendiente_revision'
 ): Promise<{ inspeccion: Inspeccion; esNuevo: boolean }> {
-  // Verificar si ya existe en el caché local primero
-  const existente = getInspeccionPorIngreso(ingresoId);
-  if (existente) return { inspeccion: existente, esNuevo: false };
-
-  const nueva = nuevaInspeccionVacia(ingresoId, usuario);
-  nueva.estado = estadoInicial;
-
-  try {
-    const guardada = await apiCrearInspeccion(nueva);
-    inspeccionesStore.set([...getInspecciones(), guardada]);
-    auditar('crear', guardada.folio, `Expediente de inspección creado asociado a ingreso ${ingresoId}`, null, guardada);
-    return { inspeccion: guardada, esNuevo: true };
-  } catch (err) {
-    // Fallback local si la API no está disponible
-    console.warn('API no disponible. Creando inspección localmente.', err);
-    inspeccionesStore.set([...getInspecciones(), nueva]);
-    return { inspeccion: nueva, esNuevo: true };
-  }
+  return crearInspeccion(ingresoId, usuario, estadoInicial);
 }
 
 export function crearInspeccion(
@@ -230,11 +203,6 @@ async function guardarInspeccionAPI(id: string, updater: (ins: Inspeccion) => In
   if (!actual) return;
   const actualizado = updater(actual);
   guardarInspeccion(id, () => actualizado);
-  try {
-    await apiActualizarInspeccion(actualizado);
-  } catch (err) {
-    console.warn('No se pudo sincronizar con la API. Cambio guardado localmente.', err);
-  }
 }
 
 export function updateDocumentacion(id: string, doc: DocumentacionValidacion): void {
