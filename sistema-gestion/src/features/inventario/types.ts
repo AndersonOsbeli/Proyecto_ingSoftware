@@ -26,7 +26,7 @@ export interface Especificacion {
 export interface IngresoEquipo {
   id: string;
   tipoProducto: string;
-  proveedor: string;
+  proveedor?: string;
   fechaIngreso: string;
   cantidad: number;
   codigoBarras: string;

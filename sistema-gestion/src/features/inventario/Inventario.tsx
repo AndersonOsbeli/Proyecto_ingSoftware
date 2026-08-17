@@ -99,7 +99,8 @@ export default function Inventario() {
                   <TableCell><strong>Fecha Ingreso</strong></TableCell>
                   <TableCell><strong>Tipo Producto</strong></TableCell>
                   <TableCell><strong>Ubicación</strong></TableCell>
-                  <TableCell><strong>Proveedor</strong></TableCell>
+                  <TableCell><strong>Marca</strong></TableCell>
+                  <TableCell><strong>Modelo</strong></TableCell>
                   <TableCell><strong>Cantidad</strong></TableCell>
                   <TableCell><strong>Especificaciones</strong></TableCell>
                   <TableCell align="right"><strong>Acciones</strong></TableCell>
@@ -131,7 +132,8 @@ export default function Inventario() {
                       <TableCell>{fecha ? new Date(fecha).toLocaleDateString('es-ES') : 'N/A'}</TableCell>
                       <TableCell>{tipo}</TableCell>
                       <TableCell>{i.ubicacion || 'Sin asignar'}</TableCell>
-                      <TableCell>{i.proveedor}</TableCell>
+                      <TableCell>{i.marca || 'N/A'}</TableCell>
+                      <TableCell>{i.modelo || 'N/A'}</TableCell>
                       <TableCell>{i.cantidad}</TableCell>
                       <TableCell>
                         <Chip size="small" label={`${numSpecs} config.`} color="info" />

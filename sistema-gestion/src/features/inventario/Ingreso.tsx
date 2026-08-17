@@ -40,6 +40,8 @@ export default function Ingreso() {
   const [form, setForm] = useState({
     tipoProducto: '',
     proveedor: '',
+    marca: '',
+    modelo: '',
     fechaIngreso: today(),
     cantidad: 1,
     codigoBarras: '',
@@ -48,8 +50,6 @@ export default function Ingreso() {
 
   // Phase 2 form state
   const [especificaciones, setEspecificaciones] = useState<Especificacion[]>([
-    { id: crypto.randomUUID(), nombre: 'Marca', valor: '', aplica: true, esPredeterminada: true, ejemplo: 'Ej. Dell, HP, Apple' },
-    { id: crypto.randomUUID(), nombre: 'Modelo', valor: '', aplica: true, esPredeterminada: true, ejemplo: 'Ej. XPS 15, ThinkPad T14' },
     { id: crypto.randomUUID(), nombre: 'Número de Serie', valor: '', aplica: true, esPredeterminada: true, ejemplo: 'Ej. 5CD1234567' },
     { id: crypto.randomUUID(), nombre: 'Procesador', valor: '', aplica: true, esPredeterminada: true, ejemplo: 'Ej. Intel Core i7-12700H, Ryzen 5' },
     { id: crypto.randomUUID(), nombre: 'Memoria RAM', valor: '', aplica: true, esPredeterminada: true, ejemplo: 'Ej. 16GB DDR4' },
@@ -70,8 +70,6 @@ export default function Ingreso() {
     
     // Default: Todo aplica
     let aplicaMap: Record<string, boolean> = {
-      'Marca': true,
-      'Modelo': true,
       'Número de Serie': true,
       'Procesador': true,
       'Memoria RAM': true,
@@ -122,7 +120,7 @@ export default function Ingreso() {
 
   const handleNext = () => {
     if (activeStep === 0) {
-      if (!form.tipoProducto || !form.proveedor || !form.fechaIngreso || !form.cantidad || !form.codigoBarras || !form.ubicacion) {
+      if (!form.tipoProducto || !form.proveedor || !form.marca || !form.modelo || !form.fechaIngreso || !form.cantidad || !form.codigoBarras || !form.ubicacion) {
         setSnack({ open: true, message: 'Todos los campos de la primera fase son obligatorios', severity: 'error' });
         return;
       }
@@ -189,13 +187,23 @@ export default function Ingreso() {
         />
       </Grid>
 
-      <Grid item xs={12} md={6}>
+      <Grid item xs={12} md={3}>
         <TextField
-          label="Proveedor *"
-          placeholder="Ej. Dell Technologies, HP Inc."
+          label="Marca *"
+          placeholder="Ej. Dell, HP, Apple"
           fullWidth
-          value={form.proveedor}
-          onChange={(e) => setField('proveedor', e.target.value)}
+          value={form.marca}
+          onChange={(e) => setField('marca', e.target.value)}
+        />
+      </Grid>
+
+      <Grid item xs={12} md={3}>
+        <TextField
+          label="Modelo *"
+          placeholder="Ej. XPS 13, ThinkPad T14"
+          fullWidth
+          value={form.modelo}
+          onChange={(e) => setField('modelo', e.target.value)}
         />
       </Grid>
 
@@ -248,6 +256,16 @@ export default function Ingreso() {
           renderInput={(params) => (
             <TextField {...params} label="Ubicación del Equipo *" placeholder="Ej. Oficina 1, Recepción..." />
           )}
+        />
+      </Grid>
+
+      <Grid item xs={12} md={6}>
+        <TextField
+          label="Proveedor *"
+          placeholder="Ej. Dell Technologies, HP Inc."
+          fullWidth
+          value={form.proveedor}
+          onChange={(e) => setField('proveedor', e.target.value)}
         />
       </Grid>
     </Grid>
@@ -366,7 +384,7 @@ export default function Ingreso() {
           <Button onClick={() => {
             setOpenModalExito(false);
             setActiveStep(0);
-            setForm({ tipoProducto: '', proveedor: '', fechaIngreso: today(), cantidad: 1, codigoBarras: '' });
+            setForm({ tipoProducto: '', proveedor: '', marca: '', modelo: '', fechaIngreso: today(), cantidad: 1, codigoBarras: '', ubicacion: '' });
           }}>
             Registrar Otro
           </Button>
