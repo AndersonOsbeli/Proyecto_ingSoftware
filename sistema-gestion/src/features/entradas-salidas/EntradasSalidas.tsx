@@ -4,7 +4,7 @@ import {
   FormControl, Typography, Table, TableBody, TableCell, TableContainer,
   TableHead, TableRow, IconButton, Chip, Snackbar, Alert,
   Card, CardContent, Avatar, Tooltip, Dialog, DialogTitle, DialogContent,
-  DialogActions, Divider, Tabs, Tab
+  DialogActions, Divider, Tabs, Tab, Checkbox, FormControlLabel
 } from '@mui/material';
 
 import VideocamIcon from '@mui/icons-material/Videocam';
@@ -26,11 +26,12 @@ import { useAuth } from '../../lib/auth';
 import { today, nowTime } from '../../lib/store';
 import { getAll, add, eliminar, update } from './service';
 import { RegistroEntradaSalida } from './types';
-import { reproducirSaludo } from './voiceService';
+import { reproducirSaludo, reproducirRechazo } from './voiceService';
 
 // Integración con Empleados y Marcajes Biométricos
 import { getEmpleadosParaReconocimiento, getById as getEmpleadoById } from '../empleados/service-empleados';
 import { registrarMarcaje, getByEmpleado as getMarcajesByEmpleado } from '../empleados/service-marcaje';
+import { getHorarioActual } from '../empleados/service-horarios';
 import { Html5Qrcode } from 'html5-qrcode';
 
 const AREAS = [
@@ -70,6 +71,23 @@ export default function EntradasSalidas() {
   const streamRef = useRef<MediaStream | null>(null);
   const [camaraActiva, setCamaraActiva] = useState(false);
 
+  // Control de fecha y hora manual/tiempo real y autorización
+  const [fechaManual, setFechaManual] = useState(false);
+  const [horaManual, setHoraManual] = useState(false);
+  const [autorizacionEspecial, setAutorizacionEspecial] = useState(false);
+  const [autorizacionEspecialQr, setAutorizacionEspecialQr] = useState(false);
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setForm((prev) => ({
+        ...prev,
+        fecha: fechaManual ? prev.fecha : today(),
+        hora: horaManual ? prev.hora : nowTime()
+      }));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [fechaManual, horaManual]);
+
   // Diálogo para Ver Foto Ampliada
   const [fotoModal, setFotoModal] = useState<string | null>(null);
 
@@ -98,19 +116,89 @@ export default function EntradasSalidas() {
     };
   }, [tabRegistro]);
 
-  const iniciarQrScanner = async () => {
-    setScanError(null);
-    setUltimoEscaneado(null);
-    try {
-      setTimeout(async () => {
-        const container = document.getElementById('qr-reader');
-        if (!container) {
-          console.error('El contenedor qr-reader no está en el DOM.');
-          return;
-        }
+  const HOLIDAYS = [
+    '01-01', // Año Nuevo
+    '05-01', // Día del Trabajo
+    '09-15', // Día de la Independencia
+    '10-20', // Día de la Revolución
+    '11-01', // Día de Todos los Santos
+    '12-24', // Nochebuena
+    '12-25', // Navidad
+  ];
+
+  const verificarAccesoLocal = (empId: string, fecha: string, hora: string): { permitido: boolean; razon: string } => {
+    const emp = getEmpleadoById(empId);
+    if (!emp) return { permitido: false, razon: 'Empleado no encontrado' };
+    
+    if (emp.estado === 'inactivo' || emp.estado === 'suspendido') {
+      return { permitido: false, razon: 'Empleado inactivo o suspendido' };
+    }
+
+    // 1. Validar si es día festivo/feriado
+    const mesDia = fecha.substring(5, 10); // MM-DD
+    if (HOLIDAYS.includes(mesDia)) {
+      return { permitido: false, razon: 'Día festivo/feriado oficial' };
+    }
+
+    // 2. Validar si es fin de semana (Sábado o Domingo)
+    const dateObj = new Date(fecha + 'T12:00:00');
+    const dayIndex = dateObj.getDay();
+    const esFinDeSemana = dayIndex === 0 || dayIndex === 6;
+
+    // 3. Obtener el horario del empleado
+    const horario = getHorarioActual(empId);
+    if (!horario) {
+      if (esFinDeSemana) {
+        return { permitido: false, razon: 'Fin de semana y sin horario asignado' };
+      }
+      return { permitido: false, razon: 'Sin horario asignado' };
+    }
+
+    // 4. Validar si el día de hoy está en los días laborales del horario
+    const diasSemanaMap = ['domingo', 'lunes', 'martes', 'miercoles', 'jueves', 'viernes', 'sabado'];
+    const diaNombre = diasSemanaMap[dayIndex];
+    if (!horario.dias.includes(diaNombre as any)) {
+      return { permitido: false, razon: `Hoy (${diaNombre}) no es día laboral según su horario` };
+    }
+
+    // 5. Validar si está dentro del horario laboral (con margen de 120 min de anticipación/retraso)
+    const [eH, eM] = horario.horaEntrada.split(':').map(Number);
+    const [sH, sM] = horario.horaSalida.split(':').map(Number);
+    const [hH, hM] = hora.split(':').map(Number);
+
+    const minutosEntrada = eH * 60 + eM;
+    const minutosSalida = sH * 60 + sM;
+    const minutosActual = hH * 60 + hM;
+
+    const inicioPermitido = minutosEntrada - 120;
+    const finPermitido = minutosSalida + 120;
+
+    if (minutosActual < inicioPermitido || minutosActual > finPermitido) {
+      return { permitido: false, razon: `Fuera de horario laboral permitido (${horario.horaEntrada} - ${horario.horaSalida})` };
+    }
+
+    return { permitido: true, razon: 'OK' };
+  };
+
+  // Control de ciclo de vida del Escáner QR
+  useEffect(() => {
+    let isMounted = true;
+    const startScanner = async () => {
+      if (!qrScannerActivo) return;
+      
+      // Esperar un momento corto para asegurar que el DOM se ha actualizado y #qr-reader existe
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      if (!isMounted) return;
+
+      const container = document.getElementById('qr-reader');
+      if (!container) {
+        console.error('El contenedor qr-reader no está en el DOM.');
+        return;
+      }
+
+      try {
         const html5QrCode = new Html5Qrcode('qr-reader');
         qrScannerRef.current = html5QrCode;
-        setQrScannerActivo(true);
 
         await html5QrCode.start(
           { facingMode: 'user' },
@@ -122,28 +210,46 @@ export default function EntradasSalidas() {
             handleQrDetectado(decodedText);
           },
           () => {
-            // Ignorar errores menores para evitar saturar la consola
+            // Ignorar errores menores
           }
         );
-      }, 300);
-    } catch (err: any) {
-      console.error('Error al iniciar el escáner QR:', err);
-      setScanError('No se pudo acceder a la cámara. Verifique los permisos.');
-      setQrScannerActivo(false);
+      } catch (err: any) {
+        console.error('Error al iniciar el escáner QR:', err);
+        setScanError('No se pudo acceder a la cámara. Verifique los permisos.');
+        setQrScannerActivo(false);
+      }
+    };
+
+    if (qrScannerActivo) {
+      startScanner();
+    } else {
+      const stopScanner = async () => {
+        if (qrScannerRef.current) {
+          if (qrScannerRef.current.isScanning) {
+            try {
+              await qrScannerRef.current.stop();
+            } catch (err) {
+              console.error('Error al detener el escáner QR:', err);
+            }
+          }
+          qrScannerRef.current = null;
+        }
+      };
+      stopScanner();
     }
+
+    return () => {
+      isMounted = false;
+    };
+  }, [qrScannerActivo]);
+
+  const iniciarQrScanner = () => {
+    setScanError(null);
+    setUltimoEscaneado(null);
+    setQrScannerActivo(true);
   };
 
   const detenerQrScanner = async () => {
-    if (qrScannerRef.current) {
-      if (qrScannerRef.current.isScanning) {
-        try {
-          await qrScannerRef.current.stop();
-        } catch (err) {
-          console.error('Error al detener el escáner QR:', err);
-        }
-      }
-      qrScannerRef.current = null;
-    }
     setQrScannerActivo(false);
   };
 
@@ -181,9 +287,22 @@ export default function EntradasSalidas() {
       tipoFinal = tipoRegistroQr;
     }
 
-    // Registrar marcaje en empleados, lo cual automáticamente lo sincroniza en entradas/salidas
-    const marcaje = registrarMarcaje(emp.id, tipoFinal, emp.fotoBase64 || '', 'Lector QR', true);
-    const exitoso = marcaje.resultado === 'exitoso';
+    // Validar acceso con reglas de feriados, fines de semana y horario laboral
+    const validacionLocal = verificarAccesoLocal(emp.id, today(), nowTime());
+    const exitoso = validacionLocal.permitido || autorizacionEspecialQr;
+
+    let marcaje;
+    if (exitoso) {
+      marcaje = registrarMarcaje(emp.id, tipoFinal, emp.fotoBase64 || '', 'Lector QR', true);
+      if (autorizacionEspecialQr) {
+        marcaje.observaciones = `Acceso Especial: ${validacionLocal.razon} (Autorizado)`.trim();
+      }
+    } else {
+      // Registrar marcaje fallido
+      marcaje = registrarMarcaje(emp.id, tipoFinal, emp.fotoBase64 || '', 'Lector QR', false);
+      marcaje.observaciones = validacionLocal.razon;
+      marcaje.resultado = 'sin_horario';
+    }
 
     setUltimoEscaneado({
       empleado: emp,
@@ -195,6 +314,8 @@ export default function EntradasSalidas() {
 
     if (exitoso) {
       reproducirSaludo(emp.nombre, tipoFinal);
+    } else {
+      reproducirRechazo(emp.nombre, marcaje.observaciones);
     }
 
     recargarRegistros();
@@ -278,11 +399,24 @@ export default function EntradasSalidas() {
   // Al seleccionar un empleado de la lista rápida
   const seleccionarEmpleado = (emp: typeof empleados[0]) => {
     setEmpleadoSeleccionado(emp);
+
+    let tipoAuto: 'entrada' | 'salida' = 'entrada';
+    const marcajes = getMarcajesByEmpleado(emp.id);
+    if (marcajes.length > 0) {
+      const ultimoMarcaje = [...marcajes].sort((a, b) => {
+        const fA = `${a.fecha}T${a.hora}`;
+        const fB = `${b.fecha}T${b.hora}`;
+        return fB.localeCompare(fA);
+      })[0];
+      tipoAuto = ultimoMarcaje.tipo === 'entrada' ? 'salida' : 'entrada';
+    }
+
     setForm((prev) => ({
       ...prev,
       nombre: emp.nombre,
       area: emp.departamento || 'Tecnologia',
       empleadoId: emp.id,
+      tipo: tipoAuto,
       fotoCapturada: emp.fotoBase64 || prev.fotoCapturada
     }));
   };
@@ -296,7 +430,25 @@ export default function EntradasSalidas() {
       return;
     }
 
+    // Validar si es empleado y aplicar reglas de horario/descanso
+    if (form.empleadoId) {
+      const validacionLocal = verificarAccesoLocal(form.empleadoId, form.fecha, form.hora);
+      if (!validacionLocal.permitido && !autorizacionEspecial) {
+        setSnack({
+          open: true,
+          message: `Acceso denegado: ${validacionLocal.razon}. Active "Autorizar acceso especial" para registrar manualmente.`,
+          severity: 'error'
+        });
+        reproducirRechazo(form.nombre, validacionLocal.razon);
+        return;
+      }
+    }
+
     const fotoFinal = form.fotoCapturada || (camaraActiva ? capturarFoto() as any : '');
+
+    const observacionConAutorizacion = autorizacionEspecial 
+      ? `${form.observaciones} [Acceso Especial Autorizado]`.trim()
+      : form.observaciones;
 
     const nuevoRegistro: Omit<RegistroEntradaSalida, 'id'> = {
       nombre: form.nombre,
@@ -305,7 +457,7 @@ export default function EntradasSalidas() {
       fecha: form.fecha,
       hora: form.hora,
       motivo: form.motivo,
-      observaciones: form.observaciones,
+      observaciones: observacionConAutorizacion,
       registradoPor: currentUser?.name || 'Estación Recepción/RRHH',
       fotoCapturada: form.fotoCapturada || fotoFinal,
       empleadoId: form.empleadoId || undefined
@@ -316,7 +468,10 @@ export default function EntradasSalidas() {
     // Si es un empleado registrado, guardar marcaje biométrico sin duplicar la sincronización
     if (form.empleadoId) {
       try {
-        registrarMarcaje(form.empleadoId, form.tipo, form.fotoCapturada, 'Sede Central', false);
+        const marcaje = registrarMarcaje(form.empleadoId, form.tipo, form.fotoCapturada, 'Sede Central', false);
+        if (autorizacionEspecial) {
+          marcaje.observaciones = `${marcaje.observaciones} (Autorizado Manualmente)`.trim();
+        }
       } catch (err) {
         console.warn('Registro secundario omitido:', err);
       }
@@ -335,6 +490,9 @@ export default function EntradasSalidas() {
 
     // Limpiar campos
     setEmpleadoSeleccionado(null);
+    setAutorizacionEspecial(false);
+    setFechaManual(false);
+    setHoraManual(false);
     setForm({
       nombre: '',
       area: 'Tecnologia',
@@ -588,7 +746,10 @@ export default function EntradasSalidas() {
                       size="small"
                       InputLabelProps={{ shrink: true }}
                       value={form.fecha}
-                      onChange={(e) => setForm({ ...form, fecha: e.target.value })}
+                      onChange={(e) => {
+                        setForm({ ...form, fecha: e.target.value });
+                        setFechaManual(true);
+                      }}
                     />
                   </Grid>
                   <Grid item xs={12} sm={4}>
@@ -600,7 +761,10 @@ export default function EntradasSalidas() {
                       size="small"
                       InputLabelProps={{ shrink: true }}
                       value={form.hora}
-                      onChange={(e) => setForm({ ...form, hora: e.target.value })}
+                      onChange={(e) => {
+                        setForm({ ...form, hora: e.target.value });
+                        setHoraManual(true);
+                      }}
                     />
                   </Grid>
 
@@ -625,6 +789,22 @@ export default function EntradasSalidas() {
                       onChange={(e) => setForm({ ...form, observaciones: e.target.value })}
                     />
                   </Grid>
+
+                  {/* Campo de Autorización Especial */}
+                  {form.empleadoId && (
+                    <Grid item xs={12}>
+                      <FormControlLabel
+                        control={
+                          <Checkbox
+                            checked={autorizacionEspecial}
+                            onChange={(e) => setAutorizacionEspecial(e.target.checked)}
+                            color="warning"
+                          />
+                        }
+                        label="Autorizar acceso especial (Día festivo / Fuera de horario / Fin de semana)"
+                      />
+                    </Grid>
+                  )}
 
                   {/* Botón de Envio Principal con Saludo por Voz */}
                   <Grid item xs={12}>
@@ -697,6 +877,18 @@ export default function EntradasSalidas() {
                       El sistema busca el último marcaje del empleado el día de hoy. Si el último fue Entrada, registrará Salida automáticamente; de lo contrario, registrará Entrada.
                     </Typography>
                   </Box>
+
+                  <FormControlLabel
+                    control={
+                      <Checkbox
+                        checked={autorizacionEspecialQr}
+                        onChange={(e) => setAutorizacionEspecialQr(e.target.checked)}
+                        color="warning"
+                      />
+                    }
+                    label="Autorizar accesos especiales (Ignorar horarios/feriados/descansos)"
+                    sx={{ mt: 1, display: 'block' }}
+                  />
                 </Box>
 
                 <Box sx={{ mt: 3, textAlign: 'center' }}>
@@ -795,8 +987,12 @@ export default function EntradasSalidas() {
                       </Typography>
 
                       <Chip
-                        label={ultimoEscaneado.tipo === 'entrada' ? 'ENTRADA REGISTRADA' : 'SALIDA REGISTRADA'}
-                        color={ultimoEscaneado.tipo === 'entrada' ? 'success' : 'warning'}
+                        label={ultimoEscaneado.exitoso 
+                          ? (ultimoEscaneado.tipo === 'entrada' ? 'ENTRADA REGISTRADA' : 'SALIDA REGISTRADA')
+                          : `RECHAZADO: ${ultimoEscaneado.mensaje.replace('Rechazado: ', '')}`}
+                        color={ultimoEscaneado.exitoso 
+                          ? (ultimoEscaneado.tipo === 'entrada' ? 'success' : 'warning') 
+                          : 'error'}
                         sx={{ fontWeight: 700, px: 2, py: 1.5, fontSize: '0.85rem' }}
                       />
 
