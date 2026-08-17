@@ -8,4 +8,6 @@ export interface RegistroEntradaSalida {
   motivo: string;
   registradoPor: string;
   observaciones: string;
+  fotoCapturada?: string;
+  empleadoId?: string;
 }

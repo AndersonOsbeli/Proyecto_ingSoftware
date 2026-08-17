@@ -4,6 +4,7 @@ import { getById as getEmpleado } from './service-empleados';
 import { getHorarioActual } from './service-horarios';
 import { tieneVacacionesActivas } from './service-vacaciones';
 import { tienePermisoActivo } from './service-permisos';
+import { add as addEntradaSalida } from '../entradas-salidas/service';
 
 export const marcajesStore = createStore<Marcaje[]>(STORAGE_KEYS.marcajes, () => []);
 
@@ -39,7 +40,8 @@ export function registrarMarcaje(
   empleadoId: string,
   tipo: TipoMarcaje,
   fotoCapturada: string,
-  ubicacion: string = 'Sede Central'
+  ubicacion: string = 'Sede Central',
+  sincronizarEntradaSalida: boolean = true
 ): Marcaje {
   const validacion = validarMarcaje(empleadoId);
   const ahora = new Date();
@@ -61,6 +63,26 @@ export function registrarMarcaje(
     fechaRegistro: nowISO()
   };
   marcajesStore.set([...getAll(), marcaje]);
+
+  if (validacion.permitido && sincronizarEntradaSalida) {
+    try {
+      addEntradaSalida({
+        nombre: empleado?.nombre || 'Empleado',
+        area: empleado?.departamento || 'General',
+        tipo: tipo === 'entrada' ? 'entrada' : 'salida',
+        fecha: ahora.toISOString().split('T')[0],
+        hora: ahora.toTimeString().substring(0, 5),
+        motivo: 'Marcaje automático / QR',
+        registradoPor: 'Lector Biométrico/QR',
+        observaciones: `Marcaje automático sincronizado. Ubicación: ${ubicacion}`,
+        fotoCapturada,
+        empleadoId
+      });
+    } catch (err) {
+      console.warn('Error al sincronizar marcaje con Entrada/Salida:', err);
+    }
+  }
+
   return marcaje;
 }
 

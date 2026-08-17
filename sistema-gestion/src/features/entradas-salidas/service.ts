@@ -17,3 +17,8 @@ export function add(registro: Omit<RegistroEntradaSalida, 'id'>): void {
 export function eliminar(id: string): void {
   registrosStore.set(getAll().filter((r) => r.id !== id));
 }
+
+export function update(id: string, data: Partial<RegistroEntradaSalida>): void {
+  registrosStore.set(getAll().map((r) => (r.id === id ? { ...r, ...data } : r)));
+}
+
