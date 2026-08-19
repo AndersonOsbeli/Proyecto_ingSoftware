@@ -43,22 +43,25 @@ export default function Login() {
           width: '46%',
           p: 6,
           color: '#FFFFFF',
-          background: 'linear-gradient(150deg, #1E3A8A 0%, #1E40AF 45%, #3B82F6 100%)'
+          backgroundImage: 'linear-gradient(150deg, rgba(4, 18, 38, 0.88), rgba(10, 79, 128, 0.68)), url("/login_banner.png")',
+          backgroundSize: 'cover',
+          backgroundPosition: 'center',
+          backgroundRepeat: 'no-repeat'
         }}
       >
-        <Box>
-          <Typography variant="h4" fontWeight={700}>
+        <Box sx={{ textAlign: 'center' }}>
+          <Typography variant="h4" fontWeight={700} sx={{ fontSize: { md: '2.6rem', lg: '3rem' }, lineHeight: 1.15 }}>
             Sistema de Gestion
           </Typography>
-          <Typography variant="subtitle1" sx={{ mt: 0.5, color: 'rgba(255,255,255,0.8)' }}>
+          <Typography variant="subtitle1" sx={{ mt: 1, fontSize: '1.1rem', color: 'rgba(255,255,255,0.85)' }}>
             Plataforma de administracion empresarial
           </Typography>
         </Box>
-        <Box>
+        <Box sx={{ width: 'min(100%, 430px)', alignSelf: 'center' }}>
           {FEATURES.map((f) => (
-            <Box key={f} sx={{ display: 'flex', alignItems: 'center', gap: 1.5, py: 1 }}>
-              <CheckCircleOutlineIcon fontSize="small" />
-              <Typography variant="body2">{f}</Typography>
+            <Box key={f} sx={{ display: 'flex', alignItems: 'center', gap: 1.5, py: 1.2 }}>
+              <CheckCircleOutlineIcon />
+              <Typography variant="body2" sx={{ fontSize: '1rem' }}>{f}</Typography>
             </Box>
           ))}
         </Box>

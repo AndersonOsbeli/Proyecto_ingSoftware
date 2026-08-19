@@ -57,10 +57,10 @@ export function eliminar(id: string): void {
   empleadosStore.set(getEmpleados().filter((e) => e.id !== id));
 }
 
-export function getEmpleadosParaReconocimiento(): Pick<Empleado, 'id' | 'nombre' | 'numeroEmpleado' | 'fotoBase64' | 'departamento'>[] {
+export function getEmpleadosParaReconocimiento(): Pick<Empleado, 'id' | 'nombre' | 'numeroEmpleado' | 'fotoBase64' | 'departamento' | 'estado'>[] {
   return getActivos().map((e) => ({
     id: e.id, nombre: e.nombre, numeroEmpleado: e.numeroEmpleado,
-    fotoBase64: e.fotoBase64, departamento: e.departamento
+    fotoBase64: e.fotoBase64, departamento: e.departamento, estado: e.estado
   }));
 }
 

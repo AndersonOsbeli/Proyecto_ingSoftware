@@ -11,6 +11,7 @@ import { getAllHorarios } from './service-horarios';
 import { registrar as registrarAuditoria } from './service-auditoria';
 import { DEPARTAMENTOS, SUCURSALES, CARGOS, Empleado } from './types';
 import { today } from '../../lib/store';
+import { API_BASE_URL } from '../../lib/apiConfig';
 
 export default function EmpleadoForm() {
   const { id } = useParams<{ id: string }>();
@@ -32,27 +33,36 @@ export default function EmpleadoForm() {
   const [fotoBase64, setFotoBase64] = useState('');
   const [camaraActiva, setCamaraActiva] = useState(false);
   const [snack, setSnack] = useState('');
+  const [guardando, setGuardando] = useState(false);
 
   const horarios = getAllHorarios();
 
   useEffect(() => {
-    if (esEdicion && id) {
-      const emp = getById(id);
-      if (emp) {
-        setNumeroEmpleado(emp.numeroEmpleado);
-        setNombre(emp.nombre);
-        setCorreo(emp.correo);
-        setGenero(emp.genero);
-        setDepartamento(emp.departamento);
-        setCargo(emp.cargo);
-        setSucursal(emp.sucursal);
-        setHorarioLaboralId(emp.horarioLaboralId || '');
-        setFechaIngreso(emp.fechaIngreso);
-        setFotoBase64(emp.fotoBase64);
+    const cargarEmpleado = async () => {
+      if (esEdicion && id) {
+        const emp = getById(id);
+        const empApi = await fetch(`${API_BASE_URL}/empleados/${id}`).then(async (response) => {
+          if (!response.ok) return null;
+          return response.json();
+        }).catch(() => null);
+        const datos = empApi || emp;
+        if (datos) {
+          setNumeroEmpleado(datos.numeroEmpleado);
+          setNombre(datos.nombre);
+          setCorreo(datos.correo);
+          setGenero(datos.genero);
+          setDepartamento(datos.departamento);
+          setCargo(datos.cargo);
+          setSucursal(datos.sucursal);
+          setHorarioLaboralId(datos.horarioLaboralId || '');
+          setFechaIngreso(datos.fechaIngreso);
+          setFotoBase64(datos.fotoBase64);
+        }
+      } else {
+        setNumeroEmpleado(generarNumeroEmpleado());
       }
-    } else {
-      setNumeroEmpleado(generarNumeroEmpleado());
-    }
+    };
+    void cargarEmpleado();
     return () => detenerCamara();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
@@ -87,38 +97,66 @@ export default function EmpleadoForm() {
     setCamaraActiva(false);
   };
 
-  const guardar = () => {
+  const guardar = async () => {
     if (!nombre || !correo || !departamento || !cargo) {
       setSnack('Complete los campos obligatorios');
       return;
     }
     const user = currentUser?.name || 'Sistema';
+    setGuardando(true);
 
-    if (esEdicion && id) {
-      update(id, {
-        nombre, correo, genero, departamento, cargo, sucursal,
-        horarioLaboralId: horarioLaboralId || null, fechaIngreso, fotoBase64
-      });
-      registrarAuditoria({
-        usuario: user, accion: 'editar', modulo: 'empleados',
-        registroAfectado: id, descripcion: `Empleado ${nombre} actualizado`,
-        datosAnteriores: null, datosNuevos: JSON.stringify({ nombre })
-      });
-      setSnack('Empleado actualizado');
-    } else {
-      const nuevo = registrar({
-        numeroEmpleado, nombre, correo, genero, departamento, cargo,
-        sucursal, horarioLaboralId: horarioLaboralId || null,
-        supervisorId: null, fechaIngreso, fotoBase64, registradoPor: user
-      });
-      registrarAuditoria({
-        usuario: user, accion: 'crear', modulo: 'empleados',
-        registroAfectado: nuevo.id, descripcion: `Empleado ${nuevo.nombre} registrado`,
-        datosAnteriores: null, datosNuevos: JSON.stringify(nuevo)
-      });
-      setSnack('Empleado registrado exitosamente');
+    try {
+      if (esEdicion && id) {
+        const response = await fetch(`${API_BASE_URL}/empleados/${id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ numeroEmpleado, nombre, correo, genero, departamento, cargo, sucursal, fechaIngreso, fotoBase64 })
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(result.error || 'No se pudo actualizar el empleado');
+        update(id, { nombre, correo, genero, departamento, cargo, sucursal, horarioLaboralId: horarioLaboralId || null, fechaIngreso, fotoBase64 });
+        registrarAuditoria({
+          usuario: user, accion: 'editar', modulo: 'empleados',
+          registroAfectado: id, descripcion: `Empleado ${nombre} actualizado`,
+          datosAnteriores: null, datosNuevos: JSON.stringify({ nombre })
+        });
+        setSnack('Empleado actualizado');
+      } else {
+        const response = await fetch(`${API_BASE_URL}/empleados`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            numeroEmpleado, nombre, correo, genero, departamento, cargo,
+            sucursal, fechaIngreso, fotoBase64
+          })
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          throw new Error(result.error || 'No se pudo registrar el empleado en la base de datos');
+        }
+
+        const nuevo = registrar({
+          numeroEmpleado: result.codigoEmpleado || numeroEmpleado,
+          nombre, correo, genero, departamento, cargo,
+          sucursal, horarioLaboralId: horarioLaboralId || null,
+          supervisorId: null, fechaIngreso, fotoBase64, registradoPor: user
+        });
+        registrarAuditoria({
+          usuario: user, accion: 'crear', modulo: 'empleados',
+          registroAfectado: String(result.empleadoId || nuevo.id),
+          descripcion: `Empleado ${nuevo.nombre} registrado`,
+          datosAnteriores: null, datosNuevos: JSON.stringify(result)
+        });
+        setSnack(result.correoEnviado
+          ? 'Empleado registrado y QR enviado por correo'
+          : 'Empleado registrado; no se pudo enviar el correo QR');
+      }
+      setTimeout(() => navigate('/empleados'), 700);
+    } catch (error) {
+      setSnack(error instanceof Error ? error.message : 'Error al guardar el empleado');
+    } finally {
+      setGuardando(false);
     }
-    setTimeout(() => navigate('/empleados'), 700);
   };
 
   return (
@@ -218,8 +256,8 @@ export default function EmpleadoForm() {
               </Grid>
               <Grid item xs={12}>
                 <Button variant="contained" onClick={guardar}
-                  disabled={!nombre || !correo || !departamento || !cargo}>
-                  {esEdicion ? 'Actualizar' : 'Registrar'}
+                  disabled={guardando || !nombre || !correo || !departamento || !cargo}>
+                  {guardando ? 'Guardando...' : (esEdicion ? 'Actualizar' : 'Registrar')}
                 </Button>
               </Grid>
             </Grid>

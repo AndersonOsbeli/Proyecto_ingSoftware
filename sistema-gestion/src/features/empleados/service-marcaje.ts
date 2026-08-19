@@ -1,5 +1,5 @@
 import { createStore, genId, nowISO } from '../../lib/store';
-import { Marcaje, TipoMarcaje, STORAGE_KEYS } from './types';
+import { Empleado, Marcaje, TipoMarcaje, STORAGE_KEYS } from './types';
 import { getById as getEmpleado } from './service-empleados';
 import { getHorarioActual } from './service-horarios';
 import { tieneVacacionesActivas } from './service-vacaciones';
@@ -41,11 +41,13 @@ export function registrarMarcaje(
   tipo: TipoMarcaje,
   fotoCapturada: string,
   ubicacion: string = 'Sede Central',
-  sincronizarEntradaSalida: boolean = true
+  sincronizarEntradaSalida: boolean = true,
+  validacionForzada?: { permitido: boolean; razon: string },
+  empleadoAlternativo?: Pick<Empleado, 'id' | 'nombre' | 'departamento' | 'estado'>
 ): Marcaje {
-  const validacion = validarMarcaje(empleadoId);
+  const validacion = validacionForzada || validarMarcaje(empleadoId);
   const ahora = new Date();
-  const empleado = getEmpleado(empleadoId);
+  const empleado = getEmpleado(empleadoId) || empleadoAlternativo;
   const marcaje: Marcaje = {
     id: genId(),
     empleadoId,

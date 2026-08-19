@@ -1,12 +1,9 @@
 /**
- * api.ts - Capa de comunicación HTTP con la API de Inventario (ASP.NET Core / Visual Studio)
- * Ajusta API_BASE_URL al puerto que asignó Visual Studio al ejecutar la API.
+ * api.ts - Capa de comunicación HTTP con la API del backend Node.js del proyecto.
  */
 
 import { IngresoEquipo, Inspeccion } from './types';
-
-// ⚠️ Cambia este puerto al que aparece en Visual Studio cuando ejecutas la API (F5)
-export const API_BASE_URL = 'https://localhost:7213/api';
+import { API_BASE_URL } from '../../lib/apiConfig';
 
 // ─────────────────────────────────────────────
 // HELPERS

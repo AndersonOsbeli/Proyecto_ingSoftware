@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
   Box, Paper, Button, Typography, IconButton, Chip, Table, TableBody,
@@ -16,6 +16,7 @@ import { getByEmpleado as getMarcajes } from './service-marcaje';
 import { getByEmpleado as getVacaciones } from './service-vacaciones';
 import { getByEmpleado as getPermisos } from './service-permisos';
 import { getByEmpleado as getAusencias } from './service-ausencias';
+import { API_BASE_URL } from '../../lib/apiConfig';
 
 const ESTADO_COLOR: Record<string, 'success' | 'error' | 'info' | 'warning' | 'default'> = {
   activo: 'success', inactivo: 'error', vacaciones: 'info', permiso: 'warning', suspendido: 'default'
@@ -27,7 +28,27 @@ export default function EmpleadoDetail() {
   const [tab, setTab] = useState(0);
   const [snack, setSnack] = useState('');
 
-  const empleado = id ? getEmpleado(id) : undefined;
+  const [empleado, setEmpleado] = useState<ReturnType<typeof getEmpleado>>(
+    id ? getEmpleado(id) : undefined
+  );
+
+  useEffect(() => {
+    if (!id) return;
+    fetch(`${API_BASE_URL}/empleados/${id}`)
+      .then(async (response) => {
+        if (!response.ok) return;
+        const item = await response.json();
+        setEmpleado({
+          ...item,
+          horarioLaboralId: null,
+          supervisorId: null,
+          registradoPor: '',
+          fechaRegistro: '',
+          biometricTemplate: item.biometricTemplate || ''
+        });
+      })
+      .catch(() => undefined);
+  }, [id]);
 
   const descargarQR = () => {
     if (!empleado) return;

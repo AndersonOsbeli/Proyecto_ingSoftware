@@ -257,16 +257,16 @@ export default function EntradasSalidas() {
     if (isProcessingQr) return;
     setIsProcessingQr(true);
 
-    const emp = getEmpleadoById(empleadoId);
+    const emp = getEmpleadoById(empleadoId) || empleados.find((item) => item.numeroEmpleado === empleadoId);
     if (!emp) {
       setSnack({ open: true, message: 'Código QR no reconocido en el sistema.', severity: 'error' });
-      setTimeout(() => setIsProcessingQr(false), 2000);
+      setIsProcessingQr(false);
       return;
     }
 
     if (emp.estado === 'inactivo' || emp.estado === 'suspendido') {
       setSnack({ open: true, message: `Empleado ${emp.nombre} está inactivo o suspendido.`, severity: 'error' });
-      setTimeout(() => setIsProcessingQr(false), 2000);
+      setIsProcessingQr(false);
       return;
     }
 
@@ -289,17 +289,26 @@ export default function EntradasSalidas() {
 
     // Validar acceso con reglas de feriados, fines de semana y horario laboral
     const validacionLocal = verificarAccesoLocal(emp.id, today(), nowTime());
-    const exitoso = validacionLocal.permitido || autorizacionEspecialQr;
+    const aplicarRestricciones = autorizacionEspecialQr;
+    const exitoso = !aplicarRestricciones || validacionLocal.permitido;
 
     let marcaje;
     if (exitoso) {
-      marcaje = registrarMarcaje(emp.id, tipoFinal, emp.fotoBase64 || '', 'Lector QR', true);
-      if (autorizacionEspecialQr) {
-        marcaje.observaciones = `Acceso Especial: ${validacionLocal.razon} (Autorizado)`.trim();
+      marcaje = registrarMarcaje(
+        emp.id, tipoFinal, emp.fotoBase64 || '', 'Lector QR', true,
+        { permitido: true, razon: validacionLocal.permitido ? validacionLocal.razon : 'Registro sin restricciones' },
+        emp
+      );
+      if (!validacionLocal.permitido) {
+        marcaje.observaciones = `Registro sin restricciones: ${validacionLocal.razon}`;
       }
     } else {
       // Registrar marcaje fallido
-      marcaje = registrarMarcaje(emp.id, tipoFinal, emp.fotoBase64 || '', 'Lector QR', false);
+      marcaje = registrarMarcaje(
+        emp.id, tipoFinal, emp.fotoBase64 || '', 'Lector QR', false,
+        { permitido: false, razon: validacionLocal.razon },
+        emp
+      );
       marcaje.observaciones = validacionLocal.razon;
       marcaje.resultado = 'sin_horario';
     }
@@ -329,7 +338,7 @@ export default function EntradasSalidas() {
       if (isQrTab) {
         iniciarQrScanner();
       }
-    }, 3500);
+    }, 900);
   };
 
   const recargarRegistros = () => {
@@ -433,10 +442,10 @@ export default function EntradasSalidas() {
     // Validar si es empleado y aplicar reglas de horario/descanso
     if (form.empleadoId) {
       const validacionLocal = verificarAccesoLocal(form.empleadoId, form.fecha, form.hora);
-      if (!validacionLocal.permitido && !autorizacionEspecial) {
+      if (autorizacionEspecial && !validacionLocal.permitido) {
         setSnack({
           open: true,
-          message: `Acceso denegado: ${validacionLocal.razon}. Active "Autorizar acceso especial" para registrar manualmente.`,
+          message: `Acceso denegado: ${validacionLocal.razon}. Desactive la restricción de feriado/descanso para registrar manualmente.`,
           severity: 'error'
         });
         reproducirRechazo(form.nombre, validacionLocal.razon);
@@ -446,9 +455,9 @@ export default function EntradasSalidas() {
 
     const fotoFinal = form.fotoCapturada || (camaraActiva ? capturarFoto() as any : '');
 
-    const observacionConAutorizacion = autorizacionEspecial 
-      ? `${form.observaciones} [Acceso Especial Autorizado]`.trim()
-      : form.observaciones;
+    const observacionConAutorizacion = autorizacionEspecial
+      ? form.observaciones
+      : `${form.observaciones} [Sin restricción de feriado/descanso]`.trim();
 
     const nuevoRegistro: Omit<RegistroEntradaSalida, 'id'> = {
       nombre: form.nombre,
@@ -886,7 +895,7 @@ export default function EntradasSalidas() {
                         color="warning"
                       />
                     }
-                    label="Autorizar accesos especiales (Ignorar horarios/feriados/descansos)"
+                    label="Aplicar restricción de feriado/descanso y horario"
                     sx={{ mt: 1, display: 'block' }}
                   />
                 </Box>

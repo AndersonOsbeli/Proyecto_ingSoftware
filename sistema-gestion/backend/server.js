@@ -7,6 +7,14 @@ require('dotenv').config();
 
 const app = express();
 const PORT = process.env.PORT || 5000;
+const smtpConfigured = Boolean(
+  process.env.SMTP_USER &&
+  process.env.SMTP_PASS &&
+  !process.env.SMTP_USER.startsWith('tu_') &&
+  !process.env.SMTP_PASS.startsWith('tu_')
+);
+const smtpFromName = process.env.SMTP_FROM_NAME || 'Sistema de Gestion de Accesos';
+const smtpFromEmail = process.env.SMTP_FROM_EMAIL || process.env.SMTP_USER;
 
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
@@ -17,11 +25,43 @@ const transporter = nodemailer.createTransport({
   host: process.env.SMTP_HOST || 'smtp.gmail.com',
   port: parseInt(process.env.SMTP_PORT || '587'),
   secure: false,
-  auth: {
-    user: process.env.SMTP_USER,
-    pass: process.env.SMTP_PASS
-  }
+  ...(smtpConfigured ? {
+    auth: {
+      user: process.env.SMTP_USER,
+      pass: process.env.SMTP_PASS
+    }
+  } : {})
 });
+
+async function enviarQrPorCorreo({ correo, nombre, codigo, departamento }) {
+  if (!smtpConfigured || !correo) return false;
+
+  const qrBuffer = await QRCode.toBuffer(codigo, { width: 350, margin: 2 });
+  await transporter.sendMail({
+    from: `"${smtpFromName}" <${smtpFromEmail}>`,
+    to: correo,
+    subject: `Credencial de Acceso y Codigo QR - ${nombre}`,
+    html: `
+      <div style="font-family: Arial, sans-serif; max-width: 500px; padding: 24px; border: 1px solid #cbd5e1; border-radius: 16px; background-color: #ffffff;">
+        <h2 style="color: #1e40af; margin-top: 0; text-align: center;">Bienvenido(a) a la Empresa</h2>
+        <p style="color: #334155;">Hola <strong>${nombre}</strong>,</p>
+        <p style="color: #334155;">Tu credencial de acceso se encuentra a continuacion. Presenta este codigo QR en el lector de entradas y salidas.</p>
+        <div style="text-align: center; margin: 24px 0; background: #f8fafc; padding: 20px; border-radius: 12px; border: 2px dashed #94a3b8;">
+          <img src="cid:qr_codigo_empleado" alt="Codigo QR ${codigo}" style="width: 220px; height: 220px; border: 2px solid #1e40af; padding: 10px; border-radius: 8px; background: white;" />
+          <p style="font-size: 18px; font-weight: bold; color: #1e3a8a; margin-top: 12px;">Codigo: ${codigo}</p>
+          <p style="font-size: 14px; color: #64748b; margin: 0;">Departamento: ${departamento || 'General'}</p>
+        </div>
+        <p style="font-size: 12px; color: #94a3b8; text-align: center;">No compartas este codigo con personas no autorizadas.</p>
+      </div>
+    `,
+    attachments: [{
+      filename: `QR_${codigo}.png`,
+      content: qrBuffer,
+      cid: 'qr_codigo_empleado'
+    }]
+  });
+  return true;
+}
 
 // Endpoint de prueba de vida API
 app.get('/api/health', (req, res) => {
@@ -36,6 +76,7 @@ app.get('/api/health', (req, res) => {
 app.get('/api/entradas-salidas', async (req, res) => {
   try {
     const pool = await poolPromise;
+    if (!pool) throw new Error('SQL Server no está conectado. Revisa el servicio MSSQLSERVER y la configuración de db.js.');
     const result = await pool.request().query(`
       SELECT 
         CAST(RegistroID AS VARCHAR(50)) AS id,
@@ -125,7 +166,7 @@ app.get('/api/empleados', async (req, res) => {
         e.FotoBase64 AS fotoBase64,
         e.BiometricTemplate AS biometricTemplate,
         s.Nombre AS sucursal,
-        e.QREnviadoPorCorreo AS qrEnviadoPorCorreo,
+        CAST(0 AS bit) AS qrEnviadoPorCorreo,
         CONVERT(VARCHAR(10), e.FechaIngreso, 120) AS fechaIngreso
       FROM Empleados e
       INNER JOIN Departamentos d ON e.DepartamentoID = d.DepartamentoID
@@ -139,11 +180,102 @@ app.get('/api/empleados', async (req, res) => {
   }
 });
 
+// GET: Obtener un empleado por su identificador
+app.get('/api/empleados/:id', async (req, res) => {
+  try {
+    const pool = await poolPromise;
+    const result = await pool.request()
+      .input('EmpleadoID', sql.Int, parseInt(req.params.id, 10))
+      .query(`
+        SELECT CAST(e.EmpleadoID AS VARCHAR(50)) AS id, e.CodigoEmpleado AS numeroEmpleado,
+          e.NombreCompleto AS nombre, e.Correo AS correo, d.Nombre AS departamento,
+          c.Nombre AS cargo, e.Genero AS genero, e.Estado AS estado, e.FotoBase64 AS fotoBase64,
+          e.BiometricTemplate AS biometricTemplate, s.Nombre AS sucursal,
+          CONVERT(VARCHAR(10), e.FechaIngreso, 120) AS fechaIngreso
+        FROM Empleados e
+        INNER JOIN Departamentos d ON e.DepartamentoID = d.DepartamentoID
+        INNER JOIN Cargos c ON e.CargoID = c.CargoID
+        INNER JOIN Sucursales s ON e.SucursalID = s.SucursalID
+        WHERE e.EmpleadoID = @EmpleadoID
+      `);
+    if (!result.recordset[0]) return res.status(404).json({ error: 'Empleado no encontrado' });
+    res.json(result.recordset[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PUT: Actualizar los datos de un empleado existente
+app.put('/api/empleados/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { numeroEmpleado, nombre, correo, genero, departamento, cargo, sucursal, fechaIngreso, fotoBase64 } = req.body;
+    const pool = await poolPromise;
+    const deptResult = await pool.request()
+      .input('Nombre', sql.NVarChar(100), departamento)
+      .query('SELECT DepartamentoID FROM Departamentos WHERE Nombre = @Nombre');
+    const cargoResult = await pool.request()
+      .input('Nombre', sql.NVarChar(100), cargo)
+      .query('SELECT CargoID FROM Cargos WHERE Nombre = @Nombre');
+    const sucResult = await pool.request()
+      .input('Nombre', sql.NVarChar(100), sucursal)
+      .query('SELECT SucursalID FROM Sucursales WHERE Nombre = @Nombre');
+
+    await pool.request()
+      .input('EmpleadoID', sql.Int, parseInt(id, 10))
+      .input('NombreCompleto', sql.NVarChar(150), nombre)
+      .input('Correo', sql.NVarChar(100), correo)
+      .input('Genero', sql.NVarChar(20), genero)
+      .input('DepartamentoID', sql.Int, deptResult.recordset[0]?.DepartamentoID || 1)
+      .input('CargoID', sql.Int, cargoResult.recordset[0]?.CargoID || 1)
+      .input('SucursalID', sql.Int, sucResult.recordset[0]?.SucursalID || 1)
+      .input('FechaIngreso', sql.Date, fechaIngreso)
+      .input('FotoBase64', sql.NVarChar(sql.MAX), fotoBase64 || '')
+      .query(`
+        UPDATE Empleados
+        SET NombreCompleto = @NombreCompleto, Correo = @Correo, Genero = @Genero,
+            DepartamentoID = @DepartamentoID, CargoID = @CargoID, SucursalID = @SucursalID,
+            FechaIngreso = @FechaIngreso, FotoBase64 = @FotoBase64
+        WHERE EmpleadoID = @EmpleadoID
+      `);
+
+    let correoEnviado = false;
+    try {
+      correoEnviado = await enviarQrPorCorreo({ correo, nombre, codigo: numeroEmpleado || `EMP-${id}`, departamento });
+    } catch (mailErr) {
+      console.warn('Empleado actualizado, pero fallo el envio del QR:');
+      console.dir(mailErr, { depth: 5 });
+    }
+    res.json({ success: true, message: correoEnviado ? 'Empleado actualizado y QR enviado' : 'Empleado actualizado', correoEnviado, correoConfigurado: smtpConfigured });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// PATCH: Activar o desactivar un empleado
+app.patch('/api/empleados/:id/estado', async (req, res) => {
+  try {
+    const estado = req.body.estado;
+    if (!['activo', 'inactivo'].includes(estado)) {
+      return res.status(400).json({ error: 'Estado no valido' });
+    }
+    const pool = await poolPromise;
+    await pool.request()
+      .input('EmpleadoID', sql.Int, parseInt(req.params.id, 10))
+      .input('Estado', sql.NVarChar(20), estado)
+      .query('UPDATE Empleados SET Estado = @Estado WHERE EmpleadoID = @EmpleadoID');
+    res.json({ success: true, estado });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
 // POST: Registrar nuevo Empleado, generar su código QR y enviarlo por correo
 app.post('/api/empleados', async (req, res) => {
   try {
     const { numeroEmpleado, nombre, correo, genero, departamento, cargo, sucursal, fechaIngreso, fotoBase64 } = req.body;
     const pool = await poolPromise;
+    if (!pool) throw new Error('SQL Server no está conectado. El empleado no fue guardado.');
 
     // Obtener IDs de departamento, cargo y sucursal o usar 1 por defecto
     const deptResult = await pool.request()
@@ -163,65 +295,42 @@ app.post('/api/empleados', async (req, res) => {
 
     const codigoFinal = numeroEmpleado || `EMP-${Date.now().toString().substring(7)}`;
 
-    // 1. Guardar empleado en SQL Server usando Stored Procedure
+    // 1. Guardar empleado usando las columnas disponibles en la base actual
     const dbResult = await pool.request()
       .input('CodigoEmpleado', sql.NVarChar(50), codigoFinal)
       .input('NombreCompleto', sql.NVarChar(150), nombre)
       .input('Correo', sql.NVarChar(100), correo)
       .input('Genero', sql.NVarChar(20), genero || 'masculino')
+      .input('Estado', sql.NVarChar(20), 'activo')
       .input('DepartamentoID', sql.Int, deptId)
       .input('CargoID', sql.Int, cargoId)
       .input('SucursalID', sql.Int, sucId)
+      .input('SupervisorID', sql.Int, null)
       .input('FechaIngreso', sql.Date, fechaIngreso || new Date())
       .input('FotoBase64', sql.NVarChar(sql.MAX), fotoBase64 || '')
+      .input('BiometricTemplate', sql.NVarChar(sql.MAX), null)
       .input('UsuarioCreacionID', sql.Int, 1)
-      .execute('sp_RegistrarEmpleado');
+      .query(`
+        INSERT INTO Empleados
+          (CodigoEmpleado, NombreCompleto, Correo, Genero, Estado,
+           DepartamentoID, CargoID, SucursalID, SupervisorID, FotoBase64,
+           BiometricTemplate, FechaIngreso, UsuarioCreacionID)
+        OUTPUT INSERTED.EmpleadoID
+        VALUES
+          (@CodigoEmpleado, @NombreCompleto, @Correo, @Genero, @Estado,
+           @DepartamentoID, @CargoID, @SucursalID, @SupervisorID, @FotoBase64,
+           @BiometricTemplate, @FechaIngreso, @UsuarioCreacionID)
+      `);
 
     const nuevoEmpleadoId = dbResult.recordset[0].EmpleadoID;
 
-    // 2. Intentar enviar correo con el Código QR generado
+    // 2. Intentar enviar correo con el codigo QR generado
     let correoEnviado = false;
     try {
-      if (process.env.SMTP_USER && correo) {
-        const qrBuffer = await QRCode.toBuffer(codigoFinal, { width: 350, margin: 2 });
-        const mailOptions = {
-          from: `"Sistema de Gestion de Accesos" <${process.env.SMTP_USER}>`,
-          to: correo,
-          subject: `🔑 Credencial de Acceso y Código QR - ${nombre}`,
-          html: `
-            <div style="font-family: Arial, sans-serif; max-width: 500px; padding: 24px; border: 1px solid #cbd5e1; border-radius: 16px; background-color: #ffffff;">
-              <h2 style="color: #1e40af; margin-top: 0; text-align: center;">¡Bienvenido(a) a la Empresa!</h2>
-              <p style="color: #334155;">Hola <strong>${nombre}</strong>,</p>
-              <p style="color: #334155;">Tu registro de empleado ha sido completado con éxito. A continuación encontrarás tu credencial oficial con tu <strong>Código QR de Acceso Personales</strong> para registrar tus entradas y salidas en el lector.</p>
-              
-              <div style="text-align: center; margin: 24px 0; background: #f8fafc; padding: 20px; border-radius: 12px; border: 2px dashed #94a3b8;">
-                <img src="cid:qr_codigo_empleado" alt="Código QR ${codigoFinal}" style="width: 220px; height: 220px; border: 2px solid #1e40af; padding: 10px; border-radius: 8px; background: white;" />
-                <p style="font-size: 18px; font-weight: bold; color: #1e3a8a; margin-top: 12px;">Código: ${codigoFinal}</p>
-                <p style="font-size: 14px; color: #64748b; margin: 0;">Departamento: ${departamento || 'General'}</p>
-              </div>
-
-              <p style="font-size: 12px; color: #94a3b8; text-align: center;">Por favor no compartas este código con personas no autorizadas.</p>
-            </div>
-          `,
-          attachments: [
-            {
-              filename: `QR_${codigoFinal}.png`,
-              content: qrBuffer,
-              cid: 'qr_codigo_empleado'
-            }
-          ]
-        };
-
-        await transporter.sendMail(mailOptions);
-        correoEnviado = true;
-
-        // Actualizar marca de envío en SQL Server
-        await pool.request()
-          .input('EmpleadoID', sql.Int, nuevoEmpleadoId)
-          .execute('sp_MarcarQREnviado');
-      }
+      correoEnviado = await enviarQrPorCorreo({ correo, nombre, codigo: codigoFinal, departamento });
     } catch (mailErr) {
-      console.warn('Empleado registrado en DB pero falló envío de mail (verificar SMTP en .env):', mailErr.message);
+      console.warn('Empleado registrado en DB pero falló envío de mail (verificar SMTP en .env):');
+      console.dir(mailErr, { depth: 5 });
     }
 
     res.status(201).json({
@@ -231,7 +340,8 @@ app.post('/api/empleados', async (req, res) => {
         : 'Empleado registrado exitosamente en la base de datos SQL Server.',
       empleadoId: nuevoEmpleadoId,
       codigoEmpleado: codigoFinal,
-      correoEnviado
+      correoEnviado,
+      correoConfigurado: smtpConfigured
     });
 
   } catch (err) {

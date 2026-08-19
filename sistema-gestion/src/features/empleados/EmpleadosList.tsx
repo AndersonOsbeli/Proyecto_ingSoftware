@@ -1,14 +1,15 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Box, Paper, Button, Typography, Table, TableBody, TableCell, TableContainer,
   TableHead, TableRow, IconButton, Chip, TextField, Select, MenuItem,
   InputLabel, FormControl, Grid, Card, CardContent, Snackbar, Alert
 } from '@mui/material';
-import { getEmpleados, activar, desactivar } from './service-empleados';
+import { activar, desactivar } from './service-empleados';
 import { registrar as registrarAuditoria } from './service-auditoria';
 import { useAuth } from '../../lib/auth';
 import { DEPARTAMENTOS, Empleado } from './types';
+import { API_BASE_URL } from '../../lib/apiConfig';
 import VisibilityIcon from '@mui/icons-material/Visibility';
 import PersonOffIcon from '@mui/icons-material/PersonOff';
 import PersonIcon from '@mui/icons-material/Person';
@@ -28,8 +29,46 @@ export default function EmpleadosList() {
   const [termino, setTermino] = useState('');
   const [filtroDepto, setFiltroDepto] = useState('');
   const [filtroEstado, setFiltroEstado] = useState('');
+  const [empleados, setEmpleados] = useState<Empleado[]>([]);
+  const [cargando, setCargando] = useState(true);
+  const [errorCarga, setErrorCarga] = useState('');
 
-  const empleados = getEmpleados();
+  useEffect(() => {
+    const cargarEmpleados = async () => {
+      try {
+        const response = await fetch(`${API_BASE_URL}/empleados`);
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error || 'No se pudieron cargar los empleados');
+
+        setEmpleados(result.map((item: Record<string, unknown>): Empleado => ({
+          id: String(item.id),
+          numeroEmpleado: String(item.numeroEmpleado || ''),
+          nombre: String(item.nombre || ''),
+          correo: String(item.correo || ''),
+          departamento: String(item.departamento || ''),
+          cargo: String(item.cargo || ''),
+          genero: (item.genero as Empleado['genero']) || 'otro',
+          estado: (item.estado as Empleado['estado']) || 'activo',
+          fotoBase64: String(item.fotoBase64 || ''),
+          biometricTemplate: String(item.biometricTemplate || ''),
+          horarioLaboralId: null,
+          sucursal: String(item.sucursal || ''),
+          supervisorId: null,
+          fechaIngreso: String(item.fechaIngreso || ''),
+          registradoPor: '',
+          fechaRegistro: ''
+        })));
+        setErrorCarga('');
+      } catch (error) {
+        setErrorCarga(error instanceof Error ? error.message : 'Error al cargar empleados');
+      } finally {
+        setCargando(false);
+      }
+    };
+
+    void cargarEmpleados();
+  }, []);
+
   const empleadosFiltrados = empleados.filter((e) => {
     if (termino) {
       const t = termino.toLowerCase();
@@ -45,7 +84,20 @@ export default function EmpleadosList() {
 
   const toggleEstado = (emp: Empleado) => {
     const usuario = currentUser?.name || 'Sistema';
-    if (emp.estado === 'activo') {
+    const nuevoEstado = emp.estado === 'activo' ? 'inactivo' : 'activo';
+    fetch(`${API_BASE_URL}/empleados/${emp.id}/estado`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ estado: nuevoEstado })
+    }).then(async (response) => {
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.error || 'No se pudo cambiar el estado');
+      setEmpleados((actuales) => actuales.map((item) => item.id === emp.id ? { ...item, estado: nuevoEstado } : item));
+    }).catch((error) => {
+      setSnack(error instanceof Error ? error.message : 'No se pudo cambiar el estado');
+    });
+
+    if (nuevoEstado === 'inactivo') {
       desactivar(emp.id);
       registrarAuditoria({
         usuario, accion: 'desactivar', modulo: 'empleados',
@@ -119,7 +171,13 @@ export default function EmpleadosList() {
       </Paper>
 
       <Paper sx={{ p: 2 }}>
-        {empleadosFiltrados.length > 0 ? (
+        {cargando ? (
+          <Typography color="text.secondary" sx={{ py: 4, textAlign: 'center' }}>
+            Cargando empleados desde SQL Server...
+          </Typography>
+        ) : errorCarga ? (
+          <Alert severity="error">{errorCarga}</Alert>
+        ) : empleadosFiltrados.length > 0 ? (
           <TableContainer>
             <Table size="small">
               <TableHead>
