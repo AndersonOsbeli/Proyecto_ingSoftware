@@ -1,35 +1,82 @@
-const sql = require('mssql/msnodesqlv8');
+const odbc = require('odbc');
 require('dotenv').config();
 
-const useWindowsAuth = !process.env.DB_USER || process.env.DB_USER.trim() === '' || process.env.DB_USER === 'windows';
-
-const server = process.env.DB_SERVER || 'localhost';
+const server = process.env.DB_SERVER || '(local)';
 const database = process.env.DB_NAME || 'SistemaGestionDB';
-const port = parseInt(process.env.DB_PORT || '1433');
-const encrypt = process.env.DB_ENCRYPT === 'true' ? 'yes' : 'no';
-const trustServerCertificate = process.env.DB_TRUST_SERVER_CERTIFICATE === 'true' ? 'yes' : 'yes';
 
-const config = {
-  server,
-  database,
-  port,
-  connectionString: useWindowsAuth
-    ? `Driver={ODBC Driver 17 for SQL Server};Server=${server},${port};Database=${database};Trusted_Connection=yes;Encrypt=${encrypt};TrustServerCertificate=${trustServerCertificate};`
-    : `Driver={ODBC Driver 17 for SQL Server};Server=${server},${port};Database=${database};Uid=${process.env.DB_USER};Pwd=${process.env.DB_PASSWORD};Encrypt=${encrypt};TrustServerCertificate=${trustServerCertificate};`
+const connectionString = process.env.DB_CONNECTION_STRING || 
+  `Driver={ODBC Driver 18 for SQL Server};Server=${server};Database=${database};Trusted_Connection=yes;TrustServerCertificate=yes;`;
+
+class OdbcRequestWrapper {
+  constructor(connectionString) {
+    this.connectionString = connectionString;
+    this.params = [];
+    this.paramMap = {};
+  }
+
+  input(name, typeOrVal, val) {
+    const value = val !== undefined ? val : typeOrVal;
+    this.params.push(value);
+    this.paramMap[name] = value;
+    return this;
+  }
+
+  async query(queryString) {
+    const conn = await odbc.connect(this.connectionString);
+    try {
+      const result = await conn.query(queryString, this.params);
+      const recordset = Array.isArray(result) ? Array.from(result) : [];
+      return { recordset, rowsAffected: [result.count || recordset.length] };
+    } finally {
+      await conn.close();
+    }
+  }
+
+  async execute(spName) {
+    const placeholders = this.params.map(() => '?').join(', ');
+    const conn = await odbc.connect(this.connectionString);
+    try {
+      const sqlCall = `EXEC ${spName} ${placeholders}`;
+      const result = await conn.query(sqlCall, this.params);
+      const recordset = Array.isArray(result) ? Array.from(result) : [];
+      return { recordset, rowsAffected: [result.count || recordset.length] };
+    } finally {
+      await conn.close();
+    }
+  }
+}
+
+class OdbcPoolWrapper {
+  constructor(connectionString) {
+    this.connectionString = connectionString;
+  }
+
+  async init() {
+    const conn = await odbc.connect(this.connectionString);
+    console.log(`✅ Conexión exitosa a SQL Server (${database}) vía ODBC Driver 18`);
+    await conn.close();
+    return this;
+  }
+
+  request() {
+    return new OdbcRequestWrapper(this.connectionString);
+  }
+}
+
+const poolWrapper = new OdbcPoolWrapper(connectionString);
+const poolPromise = poolWrapper.init().catch(err => {
+  console.error(`⚠️ Error al conectar a SQL Server (${database}):`, err.message);
+  return null;
+});
+
+const sql = {
+  Int: 'Int',
+  NVarChar: (len) => `NVarChar(${len})`,
+  VarChar: (len) => `VarChar(${len})`,
+  Bit: 'Bit',
+  Date: 'Date',
+  MAX: 'MAX'
 };
-
-const poolPromise = new sql.ConnectionPool(config)
-  .connect()
-  .then(pool => {
-    console.log(`✅ Conexión exitosa a SQL Server (${config.server} - ${config.database})`);
-    return pool;
-  })
-  .catch(err => {
-    console.error('❌ Error de Conexión a SQL Server');
-    console.error(`Destino: ${server},${port} | Base: ${database} | Autenticación: ${useWindowsAuth ? 'Windows' : 'SQL'}`);
-    console.dir(err, { depth: 10 });
-    return null;
-  });
 
 module.exports = {
   sql,

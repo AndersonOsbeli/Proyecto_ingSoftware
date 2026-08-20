@@ -34,6 +34,7 @@ export default function App() {
         <Route path="/bitacora-actividades" element={<BitacoraActividades />} />
         <Route path="/inventario" element={<Inventario />} />
         <Route path="/inventario/ingreso" element={<Ingreso />} />
+        <Route path="/inventario/ingreso/:id" element={<Ingreso />} />
         <Route path="/inventario/inspeccion/:ingresoId" element={<Inspeccion />} />
         <Route path="/empleados" element={<Empleados />} />
         <Route path="/empleados/nuevo" element={<EmpleadoForm />} />

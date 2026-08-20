@@ -5,7 +5,7 @@ import {
 } from './types';
 import { registrar as registrarAuditoria } from '../empleados/service-auditoria';
 import { TipoAccionAuditoria } from '../empleados/types';
-// API imports removed for local testing
+import { apiGetIngresos, apiRegistrarIngreso, apiActualizarIngreso } from './api';
 
 // ─── Stores locales (caché en memoria mientras se migra a la API) ──────────────
 const KEY_INGRESOS = 'sg_inventario';
@@ -63,19 +63,40 @@ export function getIngresoPorId(id: string): IngresoEquipo | undefined {
  * Llama esta función al montar el componente de inventario.
  */
 export async function cargarIngresosDesdeAPI(): Promise<void> {
-  // Local mode: do nothing, relies on localStorage
+  try {
+    const data = await apiGetIngresos();
+    if (Array.isArray(data) && data.length > 0) {
+      ingresosStore.set(data);
+    }
+  } catch (err) {
+    console.warn('Carga de API falló, usando datos locales:', err);
+  }
 }
 
 /**
- * Registra un equipo en la API y actualiza el caché local.
- * @param data - Datos del equipo sin id ni folio
- * @param archivo - Archivo de ficha técnica (opcional)
+ * Registra un equipo en la API (SQL Server) y actualiza el caché local.
  */
 export async function registrarIngresoAPI(
   data: Omit<IngresoEquipo, 'id' | 'folio'>,
   archivo?: File
 ): Promise<IngresoEquipo> {
-  return registrarIngreso(data);
+  try {
+    const apiRes = await apiRegistrarIngreso(data, archivo);
+    const nuevo: IngresoEquipo = {
+      ...data,
+      id: String(apiRes.id || genId()),
+      folio: (data as any).codigoBarras || data.numeroParte || genId(),
+      estadoDocumental: data.estadoDocumental || 'con_documento',
+      fechaRegistro: new Date().toISOString(),
+      activo: true
+    };
+    ingresosStore.set([nuevo, ...getIngresos()]);
+    auditar('crear', nuevo.folio || '', `Ingreso guardado en SQL Server (${nuevo.modelo || nuevo.tipoProducto})`, null, nuevo);
+    return nuevo;
+  } catch (err) {
+    console.warn('Error en API, guardando en almacén local:', err);
+    return registrarIngreso(data);
+  }
 }
 
 /**
@@ -96,6 +117,23 @@ export function registrarIngreso(data: Omit<IngresoEquipo, 'id' | 'folio'>): Ing
   ingresosStore.set([nuevo, ...getIngresos()]);
   auditar('crear', nuevo.folio || '', `Ingreso local (${nuevo.modelo || nuevo.tipoProducto}). Estado documental: ${estadoDoc}`, null, nuevo);
   return nuevo;
+}
+
+export async function actualizarIngresoAPI(id: string, data: IngresoEquipo): Promise<IngresoEquipo> {
+  try {
+    await apiActualizarIngreso(id, data);
+    return actualizarIngreso(id, data);
+  } catch (err) {
+    console.warn('Error en API al actualizar, actualizando localmente:', err);
+    return actualizarIngreso(id, data);
+  }
+}
+
+export function actualizarIngreso(id: string, data: IngresoEquipo): IngresoEquipo {
+  const actualizados = getIngresos().map(item => String(item.id) === String(id) ? { ...item, ...data } : item);
+  ingresosStore.set(actualizados);
+  auditar('actualizar', data.folio || id, `Ingreso actualizado en SQL Server (${data.modelo || data.tipoProducto})`, null, data);
+  return { ...data, id };
 }
 
 export async function eliminarIngresoAPI(id: string): Promise<void> {

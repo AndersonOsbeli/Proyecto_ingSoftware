@@ -354,6 +354,31 @@ app.post('/api/empleados', async (req, res) => {
 // 3. MÓDULO DE INVENTARIOS E INSPECCIONES
 // ===============================================================================
 
+function cleanText(str) {
+  if (typeof str !== 'string') return str;
+  try {
+    if (/[\u00C2\u00C3]/.test(str)) {
+      const decoded = Buffer.from(str, 'binary').toString('utf8');
+      if (!decoded.includes('')) return decoded;
+    }
+  } catch(e) {}
+  return str
+    .replace(/Almac\u00c3\u00a9n/g, 'Almacén')
+    .replace(/\u00c3\u00a9/g, 'é')
+    .replace(/\u00c3\u00a1/g, 'á')
+    .replace(/\u00c3\u00ad/g, 'í')
+    .replace(/\u00c3\u00b3/g, 'ó')
+    .replace(/\u00c3\u00ba/g, 'ú')
+    .replace(/\u00c3\u00b1/g, 'ñ')
+    .replace(/\u00c3[\s\S]?rea/g, 'Área')
+    .replace(/\u00c3\u0081/g, 'Á')
+    .replace(/\u00c3\u0089/g, 'É')
+    .replace(/\u00c3\u008d/g, 'Í')
+    .replace(/\u00c3\u0093/g, 'Ó')
+    .replace(/\u00c3\u009a/g, 'Ú')
+    .replace(/\u00c3\u0091/g, 'Ñ');
+}
+
 // GET: Listar Equipos Ingresados
 app.get('/api/Ingresos', async (req, res) => {
   try {
@@ -362,22 +387,29 @@ app.get('/api/Ingresos', async (req, res) => {
       SELECT 
         CAST(IngresoID AS VARCHAR(50)) AS id,
         TipoProducto AS tipoProducto,
+        Marca AS marca,
+        Modelo AS modelo,
+        Proveedor AS proveedor,
         Cantidad AS cantidad,
         CodigoBarras AS codigoBarras,
         Ubicacion AS ubicacion,
-        Activo AS activo,
         Folio AS folio,
         EstadoDocumental AS estadoDocumental,
-        EspecificacionesJSON AS especificaciones,
-        CONVERT(VARCHAR(10), FechaIngreso, 120) AS fechaIngreso
+        CONVERT(VARCHAR(10), FechaIngreso, 120) AS fechaIngreso,
+        EspecificacionesJSON AS especificaciones
       FROM IngresosEquipo
-      ORDER BY FechaRegistro DESC
+      ORDER BY IngresoID DESC
     `);
 
-    // Formatear JSON de especificaciones
     const items = result.recordset.map(row => ({
       ...row,
-      especificaciones: row.especificaciones ? JSON.parse(row.especificaciones) : []
+      tipoProducto: cleanText(row.tipoProducto),
+      marca: cleanText(row.marca),
+      modelo: cleanText(row.modelo),
+      proveedor: cleanText(row.proveedor),
+      ubicacion: cleanText(row.ubicacion),
+      activo: true,
+      especificaciones: row.especificaciones ? (typeof row.especificaciones === 'string' ? JSON.parse(cleanText(row.especificaciones)) : row.especificaciones) : []
     }));
 
     res.json(items);
@@ -389,26 +421,63 @@ app.get('/api/Ingresos', async (req, res) => {
 // POST: Registrar nuevo Equipo en Inventario
 app.post('/api/Ingresos', async (req, res) => {
   try {
-    const { tipoProducto, cantidad, codigoBarras, ubicacion, folio, estadoDocumental, observaciones, especificaciones } = req.body;
+    const { tipoProducto, marca, modelo, proveedor, cantidad, codigoBarras, ubicacion, folio, estadoDocumental, observaciones, especificaciones } = req.body;
     const pool = await poolPromise;
 
+    const fechaHoy = new Date().toISOString().slice(0, 10);
+
     const result = await pool.request()
-      .input('TipoProducto', sql.NVarChar(100), tipoProducto)
-      .input('FechaIngreso', sql.Date, new Date())
-      .input('Cantidad', sql.Int, cantidad || 1)
-      .input('CodigoBarras', sql.NVarChar(100), codigoBarras || `CB-${Date.now()}`)
-      .input('Ubicacion', sql.NVarChar(100), ubicacion || 'Almacen Principal')
-      .input('Folio', sql.NVarChar(50), folio || `FOL-${Date.now()}`)
-      .input('EstadoDocumental', sql.NVarChar(50), estadoDocumental || 'con_documento')
-      .input('EspecificacionesJSON', sql.NVarChar(sql.MAX), JSON.stringify(especificaciones || []))
-      .input('Observaciones', sql.NVarChar(sql.MAX), observaciones || '')
+      .input('TipoProducto', cleanText(String(tipoProducto || '')))
+      .input('Marca', cleanText(String(marca || '')))
+      .input('Modelo', cleanText(String(modelo || '')))
+      .input('Proveedor', cleanText(String(proveedor || '')))
+      .input('FechaIngreso', fechaHoy)
+      .input('Cantidad', parseInt(cantidad, 10) || 1)
+      .input('CodigoBarras', String(codigoBarras || `CB-${Date.now()}`))
+      .input('Ubicacion', cleanText(String(ubicacion || 'Almacen Principal')))
+      .input('Folio', String(folio || `FOL-${Date.now()}`))
+      .input('EstadoDocumental', String(estadoDocumental || 'con_documento'))
+      .input('EspecificacionesJSON', JSON.stringify(especificaciones || []))
+      .input('Observaciones', cleanText(String(observaciones || '')))
       .query(`
-        INSERT INTO IngresosEquipo (TipoProducto, FechaIngreso, Cantidad, CodigoBarras, Ubicacion, Folio, EstadoDocumental, EspecificacionesJSON, Observaciones)
-        VALUES (@TipoProducto, @FechaIngreso, @Cantidad, @CodigoBarras, @Ubicacion, @Folio, @EstadoDocumental, @EspecificacionesJSON, @Observaciones);
+        INSERT INTO IngresosEquipo (TipoProducto, Marca, Modelo, Proveedor, FechaIngreso, Cantidad, CodigoBarras, Ubicacion, Folio, EstadoDocumental, EspecificacionesJSON, Observaciones)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
         SELECT SCOPE_IDENTITY() AS NuevoIngresoID;
       `);
 
-    res.status(201).json({ success: true, id: result.recordset[0].NuevoIngresoID });
+    res.status(201).json({ success: true, id: result.recordset[0]?.NuevoIngresoID || 1 });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// PUT: Actualizar Equipo en Inventario por ID
+app.put('/api/Ingresos/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { tipoProducto, marca, modelo, proveedor, cantidad, codigoBarras, ubicacion, folio, estadoDocumental, observaciones, especificaciones } = req.body;
+    const pool = await poolPromise;
+
+    await pool.request()
+      .input('TipoProducto', cleanText(String(tipoProducto || '')))
+      .input('Marca', cleanText(String(marca || '')))
+      .input('Modelo', cleanText(String(modelo || '')))
+      .input('Proveedor', cleanText(String(proveedor || '')))
+      .input('Cantidad', parseInt(cantidad, 10) || 1)
+      .input('CodigoBarras', String(codigoBarras || ''))
+      .input('Ubicacion', cleanText(String(ubicacion || '')))
+      .input('Folio', String(folio || ''))
+      .input('EstadoDocumental', String(estadoDocumental || 'con_documento'))
+      .input('EspecificacionesJSON', JSON.stringify(especificaciones || []))
+      .input('Observaciones', cleanText(String(observaciones || '')))
+      .input('IngresoID', parseInt(id, 10))
+      .query(`
+        UPDATE IngresosEquipo
+        SET TipoProducto = ?, Marca = ?, Modelo = ?, Proveedor = ?, Cantidad = ?, CodigoBarras = ?, Ubicacion = ?, Folio = ?, EstadoDocumental = ?, EspecificacionesJSON = ?, Observaciones = ?
+        WHERE IngresoID = ?;
+      `);
+
+    res.json({ success: true, message: 'Producto actualizado exitosamente' });
   } catch (err) {
     res.status(400).json({ error: err.message });
   }

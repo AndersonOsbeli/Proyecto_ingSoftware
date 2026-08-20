@@ -79,6 +79,18 @@ export async function apiRegistrarIngreso(
   return handleResponse<IngresoEquipo>(res);
 }
 
+export async function apiActualizarIngreso(id: string, data: Partial<IngresoEquipo>): Promise<void> {
+  const res = await fetch(`${API_BASE_URL}/Ingresos/${id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data)
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Error al actualizar producto: ${text}`);
+  }
+}
+
 export async function apiEliminarIngreso(id: string): Promise<void> {
   const res = await fetch(`${API_BASE_URL}/Ingresos/${id}`, { method: 'DELETE' });
   if (!res.ok) {

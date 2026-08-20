@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useParams, useLocation } from 'react-router-dom';
 import {
   Box, Paper, Button, Typography, Grid, TextField, Snackbar, Alert, IconButton,
   Divider, Autocomplete, Stepper, Step, StepLabel, Switch, FormControlLabel,
@@ -12,11 +12,17 @@ import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline';
 import { useAuth } from '../../lib/auth';
 import { today } from '../../lib/store';
-import { registrarIngresoAPI } from './service';
+import { registrarIngresoAPI, actualizarIngresoAPI, getIngresoPorId } from './service';
 import { IngresoEquipo, Especificacion } from './types';
 
 export default function Ingreso() {
   const navigate = useNavigate();
+  const { id } = useParams<{ id?: string }>();
+  const location = useLocation();
+  const itemState = (location.state as any)?.item as IngresoEquipo | undefined;
+  const targetId = id || itemState?.id;
+  const isEditing = Boolean(targetId);
+
   const { currentUser } = useAuth();
   const [activeStep, setActiveStep] = useState(0);
 
@@ -28,7 +34,7 @@ export default function Ingreso() {
   const [ingresoCreado, setIngresoCreado] = useState<IngresoEquipo | null>(null);
 
   // Default product types
-  const [tiposProducto, setTiposProducto] = useState(['Monitor', 'Laptop', 'Computadora de Escritorio', 'Impresora', 'Servidor']);
+  const [tiposProducto, setTiposProducto] = useState(['Monitor', 'Laptop', 'Computadora de Escritorio', 'Impresora', 'Servidor', 'Otro tipo']);
 
   const [ubicaciones, setUbicaciones] = useState([
     'Oficina 1', 'Oficina 2', 'Oficina 3', 'Recepción', 'Sala de Juntas', 
@@ -64,6 +70,28 @@ export default function Ingreso() {
   ]);
 
   const steps = ['Datos Generales', 'Especificaciones'];
+
+  // Cargar datos en el formulario si se está editando
+  useEffect(() => {
+    if (targetId) {
+      const item = itemState || getIngresoPorId(targetId);
+      if (item) {
+        setForm({
+          tipoProducto: item.tipoProducto || item.tipoEquipo || '',
+          proveedor: item.proveedor || '',
+          marca: item.marca || '',
+          modelo: item.modelo || '',
+          fechaIngreso: item.fechaIngreso ? item.fechaIngreso.slice(0, 10) : today(),
+          cantidad: item.cantidad || 1,
+          codigoBarras: item.codigoBarras || item.folio || '',
+          ubicacion: item.ubicacion || ''
+        });
+        if (Array.isArray(item.especificaciones) && item.especificaciones.length > 0) {
+          setEspecificaciones(item.especificaciones);
+        }
+      }
+    }
+  }, [targetId]);
 
   useEffect(() => {
     const tipo = form.tipoProducto.toLowerCase();
@@ -157,18 +185,21 @@ export default function Ingreso() {
       ...form,
       especificaciones,
       registradoPor: currentUser?.name || 'Usuario',
-      // Mapeo legacy por si algo en la tabla Inventario lo requiere
       folio: form.codigoBarras,
       tipoEquipo: form.tipoProducto,
     };
 
     try {
-      // Usamos el servicio (puede fallar si la API no está, pero lo intentará)
-      const nuevoRegistro = await registrarIngresoAPI(data as IngresoEquipo);
-      setIngresoCreado(nuevoRegistro);
+      if (isEditing && targetId) {
+        const itemActualizado = await actualizarIngresoAPI(targetId, { ...data, id: targetId } as IngresoEquipo);
+        setIngresoCreado(itemActualizado || { ...data, id: targetId } as IngresoEquipo);
+      } else {
+        const nuevoRegistro = await registrarIngresoAPI(data as IngresoEquipo);
+        setIngresoCreado(nuevoRegistro);
+      }
       setOpenModalExito(true);
     } catch (err) {
-      setSnack({ open: true, message: 'Error al registrar el producto. Verifica la API.', severity: 'error' });
+      setSnack({ open: true, message: `Error al ${isEditing ? 'actualizar' : 'registrar'} el producto. Verifica la API.`, severity: 'error' });
     }
   };
 
@@ -331,7 +362,7 @@ export default function Ingreso() {
           <ArrowBackIcon />
         </IconButton>
         <Typography variant="h5" fontWeight={700} color="primary.main">
-          Registro de Nuevo Producto
+          {isEditing ? `Edición de Producto: ${form.tipoProducto || 'Item'}` : 'Registro de Nuevo Producto'}
         </Typography>
       </Box>
 
@@ -360,7 +391,7 @@ export default function Ingreso() {
           </Button>
           {activeStep === steps.length - 1 ? (
             <Button variant="contained" color="primary" onClick={handleSubmit}>
-              Guardar Producto
+              {isEditing ? 'Actualizar Producto' : 'Guardar Producto'}
             </Button>
           ) : (
             <Button variant="contained" color="primary" onClick={handleNext}>
@@ -373,21 +404,23 @@ export default function Ingreso() {
       {/* Modal de Éxito */}
       <Dialog open={openModalExito} onClose={() => navigate('/inventario')} maxWidth="sm" fullWidth>
         <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-          <CheckCircleOutlineIcon color="success" /> Producto Registrado
+          <CheckCircleOutlineIcon color="success" /> {isEditing ? 'Producto Actualizado' : 'Producto Registrado'}
         </DialogTitle>
         <DialogContent dividers>
           <Typography variant="body1" sx={{ mb: 2 }}>
-            El producto <strong>{ingresoCreado?.tipoProducto}</strong> ha sido registrado correctamente con el código <strong>{ingresoCreado?.codigoBarras}</strong>.
+            El producto <strong>{ingresoCreado?.tipoProducto}</strong> ha sido {isEditing ? 'actualizado' : 'registrado'} correctamente con el código <strong>{ingresoCreado?.codigoBarras}</strong>.
           </Typography>
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => {
-            setOpenModalExito(false);
-            setActiveStep(0);
-            setForm({ tipoProducto: '', proveedor: '', marca: '', modelo: '', fechaIngreso: today(), cantidad: 1, codigoBarras: '', ubicacion: '' });
-          }}>
-            Registrar Otro
-          </Button>
+          {!isEditing && (
+            <Button onClick={() => {
+              setOpenModalExito(false);
+              setActiveStep(0);
+              setForm({ tipoProducto: '', proveedor: '', marca: '', modelo: '', fechaIngreso: today(), cantidad: 1, codigoBarras: '', ubicacion: '' });
+            }}>
+              Registrar Otro
+            </Button>
+          )}
           <Button variant="contained" onClick={() => navigate('/inventario')}>
             Ir al Inventario
           </Button>
