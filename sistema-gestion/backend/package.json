@@ -1,0 +1,22 @@
+{
+  "name": "sistema-gestion-backend",
+  "version": "1.0.0",
+  "description": "Backend API REST en Node.js y SQL Server para Sistema de Gestión",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "nodemon server.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.6",
+    "dotenv": "^16.6.1",
+    "express": "^4.22.2",
+    "mssql": "^11.0.1",
+    "nodemailer": "^6.10.1",
+    "odbc": "^2.5.0",
+    "qrcode": "^1.5.4"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.7"
+  }
+}
