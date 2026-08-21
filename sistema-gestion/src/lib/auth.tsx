@@ -8,7 +8,7 @@ const TOKEN_KEY = 'sg_token';
 export interface AuthApi {
   currentUser: User | null;
   isAuthenticated: boolean;
-  login: (username: string, password: string) => boolean;
+  login: (username: string, password: string) => Promise<boolean>;
   logout: () => void;
   hasRole: (...roles: UserRole[]) => boolean;
   isSuperAdmin: boolean;
@@ -20,26 +20,29 @@ function getStoredUser(): User | null {
   return authStore.get().user;
 }
 
-export function login(username: string, password: string): boolean {
-  if (username === 'superadmin' && password === 'super123') {
-    const user: User = { id: '1', username: 'superadmin', role: 'superadmin', name: 'Super Usuario' };
-    authStore.set({ user, token: 'fake-jwt-token' });
-    localStorage.setItem(TOKEN_KEY, 'fake-jwt-token');
-    return true;
+// Login asíncrono consultando SQL Server
+export async function login(username: string, password: string): Promise<boolean> {
+  try {
+    const res = await fetch('http://localhost:5000/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password })
+    });
+
+    if (!res.ok) return false;
+
+    const data = await res.json();
+    if (data.success && data.user) {
+      const user: User = data.user;
+      authStore.set({ user, token: data.token });
+      localStorage.setItem(TOKEN_KEY, data.token);
+      return true;
+    }
+    return false;
+  } catch (err) {
+    console.error('Error al conectar con el servidor de autenticación:', err);
+    return false;
   }
-  if (username === 'admin' && password === 'admin') {
-    const user: User = { id: '2', username: 'admin', role: 'admin', name: 'Administrador' };
-    authStore.set({ user, token: 'fake-jwt-token' });
-    localStorage.setItem(TOKEN_KEY, 'fake-jwt-token');
-    return true;
-  }
-  if (username === 'rrhh' && password === 'rrhh123') {
-    const user: User = { id: '3', username: 'rrhh', role: 'rrhh', name: 'Recursos Humanos' };
-    authStore.set({ user, token: 'fake-jwt-token' });
-    localStorage.setItem(TOKEN_KEY, 'fake-jwt-token');
-    return true;
-  }
-  return false;
 }
 
 export function logout(): void {

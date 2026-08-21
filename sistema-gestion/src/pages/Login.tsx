@@ -7,6 +7,7 @@ import Button from '@mui/material/Button';
 import Typography from '@mui/material/Typography';
 import Alert from '@mui/material/Alert';
 import InputAdornment from '@mui/material/InputAdornment';
+import CircularProgress from '@mui/material/CircularProgress';
 import LockIcon from '@mui/icons-material/Lock';
 import PersonOutlineIcon from '@mui/icons-material/PersonOutline';
 import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline';
@@ -23,13 +24,29 @@ export default function Login() {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  const [cargando, setCargando] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (login(username, password)) {
-      navigate('/');
-    } else {
-      setError('Credenciales invalidas. Verifique su usuario y contrasena.');
+    if (!username.trim() || !password.trim()) {
+      setError('Por favor ingrese su usuario y contraseña.');
+      return;
+    }
+
+    setError('');
+    setCargando(true);
+
+    try {
+      const autenticado = await login(username.trim(), password);
+      if (autenticado) {
+        navigate('/');
+      } else {
+        setError('Credenciales invalidas. Verifique su usuario y contrasena.');
+      }
+    } catch {
+      setError('Error de conexión con el servidor. Intente más tarde.');
+    } finally {
+      setCargando(false);
     }
   };
 
@@ -88,6 +105,7 @@ export default function Login() {
               label="Usuario"
               fullWidth
               margin="normal"
+              disabled={cargando}
               value={username}
               onChange={(e) => setUsername(e.target.value)}
               slotProps={{
@@ -105,6 +123,7 @@ export default function Login() {
               type="password"
               fullWidth
               margin="normal"
+              disabled={cargando}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               slotProps={{
@@ -117,8 +136,15 @@ export default function Login() {
                 }
               }}
             />
-            <Button type="submit" variant="contained" fullWidth size="large" sx={{ mt: 3, py: 1.2 }}>
-              Ingresar
+            <Button 
+              type="submit" 
+              variant="contained" 
+              fullWidth 
+              size="large" 
+              disabled={cargando}
+              sx={{ mt: 3, py: 1.2 }}
+            >
+              {cargando ? <CircularProgress size={24} color="inherit" /> : 'Ingresar'}
             </Button>
           </Box>
         </Paper>

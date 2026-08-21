@@ -1,56 +1,71 @@
-import { createStore, genId, nowISO } from '../../lib/store';
-import { ActividadDiaria, STORAGE_KEYS_ACTIVIDADES } from './types';
+import { ActividadDiaria, FiltrosReporte } from './types';
 
-const KEY = STORAGE_KEYS_ACTIVIDADES.actividades;
+const API_BASE = 'http://localhost:5000/api/bitacora';
 
-export const actividadesStore = createStore<ActividadDiaria[]>(KEY, () => []);
-
-export function registrar(data: Omit<ActividadDiaria, 'id' | 'fechaRegistro'>): ActividadDiaria {
-  const nueva: ActividadDiaria = {
-    ...data,
-    id: genId(),
-    fechaRegistro: nowISO()
-  };
-  actividadesStore.set([...actividadesStore.get(), nueva]);
-  return nueva;
-}
-
-export function getAll(): ActividadDiaria[] {
-  return actividadesStore.get();
-}
-
-export function getByFecha(fecha: string): ActividadDiaria[] {
-  return actividadesStore.get().filter((a) => a.fecha === fecha);
-}
-
-export function getByRango(fechaInicio: string, fechaFin: string): ActividadDiaria[] {
-  return actividadesStore.get().filter((a) => a.fecha >= fechaInicio && a.fecha <= fechaFin);
-}
-
-export function getByUsuario(usuarioId: string): ActividadDiaria[] {
-  return actividadesStore.get().filter((a) => a.usuarioId === usuarioId);
-}
-
-export function getByFiltros(filtros: { fechaInicio?: string; fechaFin?: string; usuarioId?: string }): ActividadDiaria[] {
-  return actividadesStore.get().filter((a) => {
-    if (filtros.fechaInicio && a.fecha < filtros.fechaInicio) return false;
-    if (filtros.fechaFin && a.fecha > filtros.fechaFin) return false;
-    if (filtros.usuarioId && a.usuarioId !== filtros.usuarioId) return false;
-    return true;
+export async function registrar(data: Omit<ActividadDiaria, 'id' | 'fechaRegistro'>): Promise<ActividadDiaria> {
+  const res = await fetch(`${API_BASE}/registrar`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data)
   });
+  if (!res.ok) throw new Error('Error al registrar la actividad');
+  return res.json();
 }
 
-export function getFechasConActividades(mes: number, anio: number): Map<string, number> {
+export async function getByFecha(fecha: string, usuarioId: string | number): Promise<ActividadDiaria[]> {
+  if (!usuarioId) return [];
+  const res = await fetch(`${API_BASE}/por-fecha?fecha=${fecha}&usuarioId=${usuarioId}`);
+  if (!res.ok) return [];
+  return res.json();
+}
+
+export async function getFechasConActividades(mes: number, anio: number, usuarioId: string | number): Promise<Map<string, number>> {
   const mapa = new Map<string, number>();
-  const prefijo = `${anio}-${(mes + 1).toString().padStart(2, '0')}`;
-  actividadesStore.get().forEach((a) => {
-    if (a.fecha.startsWith(prefijo)) {
-      mapa.set(a.fecha, (mapa.get(a.fecha) || 0) + 1);
+  if (!usuarioId) return mapa;
+  
+  try {
+    const res = await fetch(`${API_BASE}/calendario?mes=${mes + 1}&anio=${anio}&usuarioId=${usuarioId}`);
+    if (res.ok) {
+      const data = await res.json();
+      data.forEach((d: { fecha: string; cantidad: number }) => mapa.set(d.fecha, Number(d.cantidad)));
     }
-  });
+  } catch (err) {
+    console.error('Error cargando calendario:', err);
+  }
   return mapa;
 }
 
-export function eliminar(id: string): void {
-  actividadesStore.set(actividadesStore.get().filter((a) => a.id !== id));
+export async function getByFiltros(filtros: FiltrosReporte): Promise<ActividadDiaria[]> {
+  const params = new URLSearchParams();
+  if (filtros.fechaInicio) params.append('fechaInicio', filtros.fechaInicio);
+  if (filtros.fechaFin) params.append('fechaFin', filtros.fechaFin);
+  if (filtros.usuarioId) params.append('usuarioId', filtros.usuarioId);
+
+  const res = await fetch(`${API_BASE}/reportes?${params.toString()}`);
+  if (!res.ok) return [];
+  return res.json();
+}
+
+export async function eliminar(id: string): Promise<void> {
+  await fetch(`${API_BASE}/${id}`, { method: 'DELETE' });
+}
+
+export async function enviarReportePorCorreo(params: {
+  destinatario: string;
+  actividades: ActividadDiaria[];
+  remitenteNombre: string;
+  rangoFechas: string;
+  archivoAdjunto?: {
+    nombre: string;
+    base64: string;
+  } | null;
+}): Promise<{ success: boolean; message: string }> {
+  const res = await fetch(`${API_BASE}/enviar-correo`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params)
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Error al enviar correo');
+  return data;
 }

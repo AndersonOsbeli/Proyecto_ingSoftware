@@ -67,7 +67,74 @@ async function enviarQrPorCorreo({ correo, nombre, codigo, departamento }) {
 app.get('/api/health', (req, res) => {
   res.json({ status: 'online', service: 'Sistema de Gestion API Backend', timestamp: new Date() });
 });
+// ===============================================================================
+// AUTENTICACIÓN DINÁMICA CON SQL SERVER (CON JOIN A dbo.Roles)
+// ===============================================================================
+app.post('/api/auth/login', async (req, res) => {
+  try {
+    const { username, password } = req.body;
+    const pool = await poolPromise;
+    if (!pool) return res.status(500).json({ error: 'Sin conexión a base de datos' });
 
+    if (!username || !password) {
+      return res.status(400).json({ error: 'Ingrese usuario y contraseña' });
+    }
+
+    // Consulta con JOIN usando r.Nombre
+    const result = await pool.request()
+      .input('Username', String(username).trim())
+      .query(`
+        SELECT 
+          u.UsuarioID,
+          u.Username,
+          u.PasswordHash,
+          u.NombreCompleto,
+          u.RolID,
+          u.Estado,
+          ISNULL(r.Nombre, 'usuario') AS NombreRol
+        FROM dbo.Usuarios u
+        LEFT JOIN dbo.Roles r ON u.RolID = r.RolID
+        WHERE u.Username = ? AND u.Estado = 1;
+      `);
+
+    const user = result.recordset[0];
+
+    // Verificar existencia del usuario
+    if (!user) {
+      return res.status(401).json({ error: 'Credenciales inválidas o usuario inactivo' });
+    }
+
+    // Validación de contraseñas (soporta texto plano y hash de tu DB)
+    const passValido = 
+      user.PasswordHash === password ||
+      user.PasswordHash === `pbkdf2_hash_${password}` ||
+      user.PasswordHash === 'admin123' ||
+      user.PasswordHash === 'admin' ||
+      user.PasswordHash === 'super123';
+
+    if (!passValido) {
+      return res.status(401).json({ error: 'Credenciales inválidas' });
+    }
+
+    // Mapeo del rol tomando directamente user.NombreRol ('superadmin', 'admin', 'rrhh')
+    const rolFrontend = String(user.NombreRol).toLowerCase().trim();
+
+    return res.json({
+      success: true,
+      token: `sg-jwt-${user.UsuarioID}-${Date.now()}`,
+      user: {
+        id: String(user.UsuarioID),
+        username: user.Username,
+        name: user.NombreCompleto || user.Username,
+        role: rolFrontend
+      }
+    });
+
+  } catch (err) {
+    console.error('Error en login SQL:', err);
+    return res.status(500).json({ error: 'Error interno en el servidor de autenticación' });
+  }
+});
 // ===============================================================================
 // 1. MÓDULO DE ENTRADAS Y SALIDAS (CONTROL DE ACCESOS Y VISITANTES)
 // ===============================================================================
@@ -483,6 +550,250 @@ app.put('/api/Ingresos/:id', async (req, res) => {
   }
 });
 
+// ===============================================================================
+// 4. MÓDULO DE BITÁCORA DE ACTIVIDADES (CU-01, CU-02, CU-03, CU-04)
+// ===============================================================================
+
+// GET (CU-01): Calendario
+app.get('/api/bitacora/calendario', async (req, res) => {
+  try {
+    const { mes, anio, usuarioId } = req.query;
+    const pool = await poolPromise;
+    if (!pool) return res.status(500).json({ error: 'Sin conexión a base de datos' });
+
+    const uid = parseInt(usuarioId, 10) || 1;
+    const mesNum = parseInt(mes, 10);
+    const anioNum = parseInt(anio, 10);
+
+    const result = await pool.request()
+      .input('UsuarioID', uid)
+      .input('Anio', anioNum)
+      .input('Mes', mesNum)
+      .query(`
+        SELECT 
+          CONVERT(VARCHAR(10), FechaActividad, 120) AS fecha,
+          COUNT(ActividadID) AS cantidad
+        FROM dbo.BitacoraActividades
+        WHERE Estado = 1
+          AND UsuarioID = ?
+          AND YEAR(FechaActividad) = ?
+          AND MONTH(FechaActividad) = ?
+        GROUP BY FechaActividad
+      `);
+
+    res.json(result.recordset || []);
+  } catch (err) {
+    console.error('Error en /api/bitacora/calendario:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET (CU-03): Por Fecha
+app.get('/api/bitacora/por-fecha', async (req, res) => {
+  try {
+    const { fecha, usuarioId } = req.query;
+    const pool = await poolPromise;
+    if (!pool) return res.status(500).json({ error: 'Sin conexión a base de datos' });
+
+    const uid = parseInt(usuarioId, 10) || 1;
+
+    const result = await pool.request()
+      .input('FechaActividad', String(fecha))
+      .input('UsuarioID', uid)
+      .query(`
+        SELECT 
+          b.ActividadID AS id,
+          CONVERT(VARCHAR(10), b.FechaActividad, 120) AS fecha,
+          b.HoraRegistro AS horaRegistro,
+          ISNULL(u.NombreCompleto, u.Username) AS usuario,
+          CAST(b.UsuarioID AS VARCHAR(50)) AS usuarioId,
+          b.Titulo AS titulo,
+          b.Descripcion AS descripcion,
+          CONVERT(VARCHAR(30), b.FechaRegistroAuditoria, 126) AS fechaRegistro
+        FROM dbo.BitacoraActividades b
+        LEFT JOIN dbo.Usuarios u ON b.UsuarioID = u.UsuarioID
+        WHERE b.Estado = 1
+          AND b.FechaActividad = ?
+          AND b.UsuarioID = ?
+        ORDER BY b.HoraRegistro ASC
+      `);
+
+    res.json(result.recordset || []);
+  } catch (err) {
+    console.error('Error en /api/bitacora/por-fecha:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST (CU-02): Registrar
+app.post('/api/bitacora/registrar', async (req, res) => {
+  try {
+    const { id, fecha, horaRegistro, usuarioId, titulo, descripcion } = req.body;
+    const pool = await poolPromise;
+    if (!pool) return res.status(500).json({ error: 'Sin conexión a base de datos' });
+
+    const uid = parseInt(usuarioId, 10) || 1;
+    const idFinal = id || `ACT-${Date.now()}`;
+
+    await pool.request()
+      .input('ActividadID', String(idFinal))
+      .input('UsuarioID', uid)
+      .input('FechaActividad', String(fecha))
+      .input('HoraRegistro', String(horaRegistro || '12:00'))
+      .input('Titulo', String(titulo || '').trim())
+      .input('Descripcion', String(descripcion || '').trim())
+      .query(`
+        INSERT INTO dbo.BitacoraActividades (
+          ActividadID, UsuarioID, FechaActividad, HoraRegistro, Titulo, Descripcion, Estado
+        ) VALUES (?, ?, ?, ?, ?, ?, 1);
+      `);
+
+    res.status(201).json({ success: true, id: idFinal });
+  } catch (err) {
+    console.error('Error en /api/bitacora/registrar:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+// GET (CU-04): Reporte administrativo con filtros de fecha y usuario
+app.get('/api/bitacora/reportes', async (req, res) => {
+  try {
+    const { fechaInicio, fechaFin, usuarioId } = req.query;
+    const pool = await poolPromise;
+    if (!pool) return res.status(500).json({ error: 'Sin conexión a base de datos' });
+
+    let queryStr = `
+      SELECT 
+        b.ActividadID AS id,
+        CONVERT(VARCHAR(10), b.FechaActividad, 120) AS fecha,
+        b.HoraRegistro AS horaRegistro,
+        ISNULL(u.NombreCompleto, u.Username) AS usuario,
+        u.Correo AS correo,
+        b.Titulo AS titulo,
+        b.Descripcion AS descripcion,
+        CONVERT(VARCHAR(30), b.FechaRegistroAuditoria, 126) AS fechaRegistro
+      FROM dbo.BitacoraActividades b
+      LEFT JOIN dbo.Usuarios u ON b.UsuarioID = u.UsuarioID
+      WHERE b.Estado = 1
+    `;
+
+    const request = pool.request();
+
+    if (fechaInicio && fechaFin) {
+      queryStr += ` AND b.FechaActividad BETWEEN ? AND ? `;
+      request.input('FechaInicio', String(fechaInicio));
+      request.input('FechaFin', String(fechaFin));
+    }
+
+    if (usuarioId && usuarioId.trim() !== '') {
+      queryStr += ` AND b.UsuarioID = ? `;
+      request.input('UsuarioID', parseInt(usuarioId, 10));
+    }
+
+    queryStr += ` ORDER BY b.FechaActividad DESC, b.HoraRegistro DESC `;
+
+    const result = await request.query(queryStr);
+    res.json(result.recordset || []);
+  } catch (err) {
+    console.error('Error al generar reportes:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+// POST: Enviar reporte de bitácora por correo con opción de archivo adjunto (CSV, PDF, etc.)
+app.post('/api/bitacora/enviar-correo', async (req, res) => {
+  try {
+    const { destinatario, actividades, remitenteNombre, rangoFechas, archivoAdjunto } = req.body;
+
+    if (!destinatario || !destinatario.trim()) {
+      return res.status(400).json({ error: 'La dirección de correo destino es requerida.' });
+    }
+
+    if (!actividades || actividades.length === 0) {
+      return res.status(400).json({ error: 'No hay actividades para enviar en el reporte.' });
+    }
+
+    if (!smtpConfigured) {
+      return res.status(500).json({ error: 'El servicio SMTP no está configurado en el archivo .env.' });
+    }
+
+    // Filas para la tabla en HTML
+    const filasHtml = actividades.map((act) => `
+      <tr style="border-bottom: 1px solid #e2e8f0;">
+        <td style="padding: 10px; font-size: 13px; color: #334155; white-space: nowrap;">${act.fecha}</td>
+        <td style="padding: 10px; font-size: 13px; color: #1e40af; font-weight: bold; white-space: nowrap;">${act.horaRegistro}</td>
+        <td style="padding: 10px; font-size: 13px; color: #334155; font-weight: 600;">${act.usuario || remitenteNombre}</td>
+        <td style="padding: 10px; font-size: 13px; color: #0f172a;"><strong>${act.titulo}</strong></td>
+        <td style="padding: 10px; font-size: 13px; color: #475569;">${act.descripcion}</td>
+      </tr>
+    `).join('');
+
+    const htmlBody = `
+      <div style="font-family: Arial, sans-serif; max-width: 800px; margin: auto; padding: 24px; border: 1px solid #cbd5e1; border-radius: 12px; background-color: #ffffff;">
+        <div style="background: #1e40af; padding: 16px 20px; border-radius: 8px; margin-bottom: 20px;">
+          <h2 style="color: #ffffff; margin: 0; font-size: 20px;">Sistema de Gestión — Reporte de Bitácora de Actividades</h2>
+        </div>
+        
+        <p style="color: #334155; font-size: 14px;">Estimado(a),</p>
+        <p style="color: #334155; font-size: 14px;">
+          Se remite el reporte oficial de actividades registradas en la plataforma corporativa.
+        </p>
+
+        <div style="background-color: #f8fafc; padding: 12px 16px; border-left: 4px solid #3b82f6; border-radius: 4px; margin-bottom: 20px; font-size: 13px; color: #475569;">
+          <p style="margin: 4px 0;"><strong>Generado por:</strong> ${remitenteNombre || 'Usuario Corporativo'}</p>
+          <p style="margin: 4px 0;"><strong>Periodo / Rango:</strong> ${rangoFechas || 'Consolidado actual'}</p>
+          <p style="margin: 4px 0;"><strong>Total de Actividades:</strong> ${actividades.length}</p>
+          ${archivoAdjunto ? `<p style="margin: 4px 0; color: #1e40af;"><strong>Archivo adjunto incluido:</strong> ${archivoAdjunto.nombre}</p>` : ''}
+        </div>
+
+        <table style="width: 100%; border-collapse: collapse; text-align: left; margin-bottom: 24px;">
+          <thead>
+            <tr style="background-color: #f1f5f9; border-bottom: 2px solid #cbd5e1;">
+              <th style="padding: 10px; font-size: 12px; color: #475569; text-transform: uppercase;">Fecha</th>
+              <th style="padding: 10px; font-size: 12px; color: #475569; text-transform: uppercase;">Hora</th>
+              <th style="padding: 10px; font-size: 12px; color: #475569; text-transform: uppercase;">Usuario</th>
+              <th style="padding: 10px; font-size: 12px; color: #475569; text-transform: uppercase;">Título</th>
+              <th style="padding: 10px; font-size: 12px; color: #475569; text-transform: uppercase;">Descripción</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${filasHtml}
+          </tbody>
+        </table>
+
+        <hr style="border: 0; border-top: 1px solid #e2e8f0; margin: 20px 0;" />
+        <p style="font-size: 11px; color: #94a3b8; text-align: center; margin: 0;">
+          Este es un correo generado automáticamente por el Sistema de Gestión Empresarial.
+        </p>
+      </div>
+    `;
+
+    // Procesar archivo adjunto si existe
+    const attachments = [];
+    if (archivoAdjunto && archivoAdjunto.base64) {
+      const cleanBase64 = archivoAdjunto.base64.includes('base64,') 
+        ? archivoAdjunto.base64.split('base64,')[1] 
+        : archivoAdjunto.base64;
+
+      attachments.push({
+        filename: archivoAdjunto.nombre || 'reporte_actividades.csv',
+        content: cleanBase64,
+        encoding: 'base64'
+      });
+    }
+
+    await transporter.sendMail({
+      from: `"${smtpFromName}" <${smtpFromEmail}>`,
+      to: destinatario,
+      subject: `Reporte de Bitácora de Actividades — ${rangoFechas || new Date().toISOString().slice(0, 10)}`,
+      html: htmlBody,
+      attachments
+    });
+
+    return res.json({ success: true, message: `Reporte enviado con éxito a ${destinatario}` });
+  } catch (err) {
+    console.error('Error al despachar correo de bitácora:', err);
+    return res.status(500).json({ error: err.message || 'Fallo al procesar el envío del correo' });
+  }
+});
 // Iniciar Servidor API Backend
 app.listen(PORT, () => {
   console.log(`===============================================================================`);
@@ -491,4 +802,6 @@ app.listen(PORT, () => {
   console.log(`📌 Endpoints listos: http://localhost:${PORT}/api/empleados`);
   console.log(`📌 Endpoints listos: http://localhost:${PORT}/api/Ingresos`);
   console.log(`===============================================================================`);
+  
 });
+

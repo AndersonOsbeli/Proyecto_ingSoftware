@@ -19,9 +19,9 @@ export interface DiaCalendario {
 }
 
 export interface FiltrosReporte {
-  fechaInicio: string;
-  fechaFin: string;
-  usuarioId: string;
+  fechaInicio?: string;
+  fechaFin?: string;
+  usuarioId?: string;
 }
 
 export const STORAGE_KEYS_ACTIVIDADES = {

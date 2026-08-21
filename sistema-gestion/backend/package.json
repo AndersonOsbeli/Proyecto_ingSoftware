@@ -8,11 +8,11 @@
     "dev": "nodemon server.js"
   },
   "dependencies": {
-    "cors": "^2.8.5",
-    "dotenv": "^16.4.5",
-    "express": "^4.21.1",
+    "cors": "^2.8.6",
+    "dotenv": "^16.6.1",
+    "express": "^4.22.2",
     "mssql": "^11.0.1",
-    "nodemailer": "^6.9.16",
+    "nodemailer": "^6.10.1",
     "odbc": "^2.5.0",
     "qrcode": "^1.5.4"
   },

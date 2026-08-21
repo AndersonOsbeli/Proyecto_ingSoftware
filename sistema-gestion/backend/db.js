@@ -1,8 +1,8 @@
 const odbc = require('odbc');
 require('dotenv').config();
 
-const server = process.env.DB_SERVER || '(local)';
-const database = process.env.DB_NAME || 'SistemaGestionDB';
+const server = process.env.DB_SERVER || '(DEPINFOR20\SQLEXPRESS)';
+const database = process.env.DB_NAME || 'SistemaGestion';
 
 const connectionString = process.env.DB_CONNECTION_STRING || 
   `Driver={ODBC Driver 18 for SQL Server};Server=${server};Database=${database};Trusted_Connection=yes;TrustServerCertificate=yes;`;
